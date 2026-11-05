@@ -1,0 +1,91 @@
+/* Frey UI kit tokens (R5-3.0-A). The single definition of the approved minimalist look.
+   Values come from experiments/frey-design-preview/style.css (read-only reference); a test compares them.
+   Semantic names only: components never use a raw colour. Dark is the default, light overrides.
+   Folder colours are CONTENT, not theme: they are declared once and never overridden below. */
+:root {
+  --fk-bg: #17191d;
+  --fk-canvas: #101215;
+  --fk-surface: #1f2227;
+  --fk-raised: #282c32;
+  --fk-field: #191c21;
+  --fk-text: #f2f2ef;
+  --fk-muted: #b0b5be;
+  --fk-border: #383d45;
+  --fk-gold: #dfbd62;
+  --fk-gold-ink: #211c10;
+  --fk-selection: #302c21;
+  --fk-focus: #e6c571;
+  --fk-danger: #f4979d;
+  --fk-danger-bg: #382226;
+  /* Documented exception: no separate warning/ok hue exists in the approved look. Warnings and
+     "ready" use the focus gold and are always paired with an icon and text, never colour alone. */
+  --fk-warning: var(--fk-focus);
+  --fk-ok: var(--fk-focus);
+
+  /* Content colours (folders): identical in every theme. */
+  --fk-folder-text: #dc646d;
+  --fk-folder-sound: #e0bd4c;
+  --fk-folder-tools: #9584df;
+  --fk-folder-new: #7ba991;
+
+  /* Shape */
+  --fk-radius: 6px;
+  --fk-radius-container: 7px;
+  --fk-radius-window: 10px;
+  --fk-radius-kbd: 4px;
+  --fk-border-width: 1px;
+
+  /* Density-sensitive spacing */
+  --fk-gap: 24px;
+  --fk-row-height: 62px;
+  --fk-space-1: 4px;
+  --fk-space-2: 8px;
+  --fk-space-3: 12px;
+  --fk-space-4: 16px;
+  --fk-space-5: 24px;
+
+  /* Type */
+  --fk-font: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  --fk-fs-body: 13px;
+  --fk-fs-label: 12px;
+  --fk-fs-caption: 11px;
+  --fk-fs-micro: 10px;
+  --fk-fs-title: 15px;
+  --fk-fs-headline: 23px;
+  --fk-fs-title-compact: 19px; /* panel-title-compact: the Zoltraak compact header (preview, 13/10) */
+
+  /* Control sizes */
+  --fk-control-height: 34px;
+  --fk-field-height: 36px;
+  --fk-icon-button: 32px;
+  --fk-toolbar-button: 40px;
+  --fk-appbar-height: 49px;
+
+  /* Motion and layers */
+  --fk-press-duration: 140ms;
+  --fk-layer-tooltip: 6;
+  --fk-layer-notice: 5;
+  --fk-notice-shadow: 0 7px 25px rgba(0, 0, 0, .2);
+}
+
+:root[data-theme="light"] {
+  --fk-bg: #f5f5f2;
+  --fk-canvas: #e6e7e4;
+  --fk-surface: #ffffff;
+  --fk-raised: #eaece8;
+  --fk-field: #ffffff;
+  --fk-text: #22272c;
+  --fk-muted: #59636d;
+  --fk-border: #cdd1cd;
+  --fk-gold: #dcc079;
+  --fk-gold-ink: #211c10;
+  --fk-selection: #f2ebd9;
+  --fk-focus: #846018;
+  --fk-danger: #a62a38;
+  --fk-danger-bg: #fcecef;
+}
+
+:root[data-density="compact"] {
+  --fk-gap: 20px;
+  --fk-row-height: 48px;
+}

@@ -1,0 +1,9 @@
+# Compilacao
+src-tauri/target/
+src-tauri/target-dist/
+src-tauri/gen/
+dist/
+
+# Rascunho antigo e arquivos de conferencia
+prototipo-powershell/
+packaging/branding/icon-preview.png

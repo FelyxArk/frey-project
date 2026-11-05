@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Frey Project</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div id="shell" class="shell">
+    <header class="titlebar" data-tauri-drag-region>
+      <span class="tabs" role="tablist">
+        <button id="tabProject" type="button" role="tab" aria-selected="true" data-i18n="tabProject"></button>
+        <button id="tabConvert" type="button" role="tab" aria-selected="false" data-i18n="tabConvert"></button>
+        <button id="tabSettings" type="button" role="tab" aria-selected="false" data-i18n="tabSettings"></button>
+      </span>
+      <span class="titlebar__right" data-tauri-drag-region>
+        <kbd id="hotkey" dir="ltr" data-tauri-drag-region></kbd>
+        <button id="pin" class="icon" type="button" aria-pressed="false" data-i18n-title="pinTitle" data-i18n-aria="pinTitle">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4 1.5h4M4.5 1.5v4L3 7.5h6L7.5 5.5v-4M6 7.5v3.5"/></svg>
+        </button>
+        <button id="hide" class="icon icon--close" type="button" data-i18n-title="hideTitle" data-i18n-aria="hideTitle">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg>
+        </button>
+      </span>
+    </header>
+
+    <div id="viewProject" role="tabpanel" aria-labelledby="tabProject">
+      <div class="mode" role="radiogroup">
+        <button id="modeCreate" type="button" role="radio" aria-checked="true" data-i18n="modeCreateFolders"></button>
+        <button id="modeDownload" type="button" role="radio" aria-checked="false" data-i18n="modeDownloadOnly"></button>
+      </div>
+      <div class="query" id="queryRow">
+        <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M2 5.5h5l1.5 2H16v7.5H2z"/></svg>
+        <input id="name" type="text" maxlength="120" spellcheck="false" autocomplete="off" data-i18n-placeholder="namePlaceholder" data-i18n-aria="namePlaceholder">
+      </div>
+
+      <div class="fields">
+        <label class="field" id="fieldModel">
+          <span data-i18n="modelLabel"></span>
+          <select id="model"></select>
+        </label>
+        <div class="field field--grow">
+          <span id="destLabel" data-i18n="destLabel"></span>
+          <button id="dest" class="path" type="button" aria-labelledby="destLabel"></button>
+        </div>
+        <label class="field field--small">
+          <span data-i18n="afterDownload"></span>
+          <select id="convertTo">
+            <option value="" data-i18n="keepOriginal"></option>
+            <option value="mp4" data-i18n="toMp4"></option>
+            <option value="mov" data-i18n="toMov"></option>
+            <option value="mkv" data-i18n="toMkv"></option>
+            <option value="webm" data-i18n="toWebm"></option>
+            <option value="mp3" data-i18n="extractMp3"></option>
+            <option value="wav" data-i18n="extractWav"></option>
+            <option value="m4a" data-i18n="extractM4a"></option>
+          </select>
+        </label>
+      </div>
+
+      <div class="tree" id="tree"></div>
+
+      <div class="paste">
+        <input id="links" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder="pastePlaceholder" data-i18n-aria="pastePlaceholder">
+      </div>
+
+      <ul class="rows" id="rows"></ul>
+    </div>
+
+    <div id="viewConvert" role="tabpanel" aria-labelledby="tabConvert" hidden>
+      <div class="fields fields--first">
+        <label class="field">
+          <span data-i18n="convertTo"></span>
+          <select id="cFormat"></select>
+        </label>
+        <label class="field field--grow">
+          <span data-i18n="modeLabel"></span>
+          <select id="cMode">
+            <option value="auto" data-i18n="modeAuto"></option>
+            <option value="copy" data-i18n="modeCopy"></option>
+            <option value="encode" data-i18n="modeEncode"></option>
+          </select>
+        </label>
+        <label class="field field--small">
+          <span data-i18n="qualityLabel"></span>
+          <select id="cQuality">
+            <option value="18" data-i18n="qHigh"></option>
+            <option value="22" data-i18n="qNormal" selected></option>
+            <option value="28" data-i18n="qSmall"></option>
+          </select>
+        </label>
+      </div>
+      <div class="fields">
+        <div class="field field--grow">
+          <span id="outLabel" data-i18n="saveIn"></span>
+          <button id="cOut" class="path is-empty" type="button" aria-labelledby="outLabel"></button>
+        </div>
+        <label class="check">
+          <input id="cGpu" type="checkbox" disabled>
+          <span id="cGpuLabel"></span>
+        </label>
+      </div>
+      <button id="cAdd" class="drop" type="button" data-i18n="dropVideos"></button>
+      <ul class="rows" id="cRows"></ul>
+    </div>
+
+    <div id="viewSettings" role="tabpanel" aria-labelledby="tabSettings" hidden>
+      <div class="fields fields--first">
+        <label class="field">
+          <span data-i18n="language"></span>
+          <select id="sLanguage"></select>
+        </label>
+        <label class="check">
+          <input id="sOpenAtEnd" type="checkbox">
+          <span data-i18n="openAtEnd"></span>
+        </label>
+      </div>
+      <div class="fields fields--end">
+        <label class="field field--grow">
+          <span data-i18n="modelsTitle"></span>
+          <select id="sModel"></select>
+        </label>
+        <button id="sNew" class="btn btn--small" type="button" data-i18n="modelNew"></button>
+        <button id="sDuplicate" class="btn btn--small" type="button" data-i18n="modelDuplicate"></button>
+        <button id="sDelete" class="btn btn--small btn--danger" type="button" data-i18n="modelDelete"></button>
+      </div>
+      <div class="fields">
+        <label class="field field--half">
+          <span data-i18n="modelName"></span>
+          <input id="sName" class="input" type="text" maxlength="80" spellcheck="false" autocomplete="off">
+        </label>
+        <label class="field field--half">
+          <span data-i18n="rootLabel"></span>
+          <input id="sRoot" class="input" type="text" dir="ltr" maxlength="120" spellcheck="false" autocomplete="off">
+        </label>
+      </div>
+      <p class="hint" data-i18n="rootHint"></p>
+      <div class="folders">
+        <span class="folders__label" data-i18n="foldersLabel"></span>
+        <ul class="folder-list" id="sFolderList"></ul>
+        <button id="sAddFolder" class="add-folder" type="button" data-i18n="addFolder"></button>
+      </div>
+      <p class="hint" data-i18n="foldersHint"></p>
+      <div class="tree tree--settings" id="sTree"></div>
+      <div class="fields">
+        <button id="sRestore" class="link" type="button" data-i18n="restoreDefault"></button>
+      </div>
+    </div>
+
+    <div class="progress" id="progressTrack" hidden><div id="progressBar" class="progress__bar"></div></div>
+    <p class="status" id="status" role="status"></p>
+
+    <footer class="actions" id="actions">
+      <button id="open" type="button" class="btn" disabled data-i18n="openFolder"></button>
+      <button id="cancel" type="button" class="btn" hidden data-i18n="cancel"></button>
+      <button id="go" type="button" class="btn btn--primary"></button>
+    </footer>
+  </div>
+  <script src="strings.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

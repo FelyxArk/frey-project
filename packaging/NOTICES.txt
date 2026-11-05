@@ -1,0 +1,25 @@
+Frey Project inclui os programas abaixo, sem alteracao, na pasta bin.
+Cada um pertence aos seus autores e segue a sua propria licenca.
+
+FFmpeg (ffmpeg.exe, ffprobe.exe) - compilacao "essentials" de gyan.dev
+  Licenca: GNU GPL versao 3 (texto em licenses\FFmpeg-LICENSE.txt)
+  Codigo-fonte da versao incluida: https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz
+  Compilacao e bibliotecas: https://www.gyan.dev/ffmpeg/builds/
+
+yt-dlp (yt-dlp.exe)
+  Licenca: The Unlicense, com componentes de terceiros descritos pelo projeto
+  Codigo-fonte: https://github.com/yt-dlp/yt-dlp
+
+Deno (deno.exe)
+  Licenca: MIT
+  Codigo-fonte: https://github.com/denoland/deno
+
+Microsoft Edge WebView2 Runtime - instalado apenas se faltar no Windows
+  Licenca: termos da Microsoft
+  https://developer.microsoft.com/microsoft-edge/webview2/
+
+O proprio Frey Project esta sob a licenca MIT (licenses\Frey-Project-LICENSE.txt).
+As bibliotecas Rust dentro do executavel estao em licenses\Rust-Libraries.txt.
+
+Versoes incluidas neste instalador:
+{{VERSIONS}}
