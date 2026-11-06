@@ -6,8 +6,8 @@
   var STRINGS = window.FreyStrings;
   var $ = function (id) { return document.getElementById(id); };
   var LANGUAGES = [["pt", "Português", "pt-BR"], ["en", "English", "en"], ["es", "Español", "es"], ["fr", "Français", "fr"], ["ja", "日本語", "ja"], ["zh", "简体中文", "zh-Hans"], ["zht", "繁體中文", "zh-Hant"], ["ru", "Русский", "ru"], ["ar", "العربية", "ar"]];
-  var FORMATS = [["mp4", "MP4", "fmtVideo"], ["mov", "MOV", "fmtVideo"], ["mkv", "MKV", "fmtVideo"], ["webm", "WEBM", "fmtVideo"], ["gif", "GIF", "fmtAnimated"], ["mp3", "MP3", "fmtAudio"], ["wav", "WAV", "fmtAudio"], ["m4a", "M4A", "fmtAudio"]];
-  var QUALITIES = [["1080", "q1080"], ["720", "q720"], ["edit4k", "qEdit4k"], ["best", "qBest"], ["audio", "qAudio"]];
+  var FORMATS = [["mp4", "MP4", "fmtVideo"], ["mov", "MOV", "fmtVideo"], ["mkv", "MKV", "fmtVideo"], ["webm", "WEBM", "fmtVideo"], ["gif", "GIF", "fmtAnimated"], ["mp3", "MP3", "fmtAudio"], ["wav", "WAV", "fmtAudio"], ["m4a", "M4A", "fmtAudio"], ["flac", "FLAC", "fmtAudio"], ["opus", "Opus", "fmtAudio"]];
+  var QUALITIES = [["1080", "q1080"], ["720", "q720"], ["edit4k", "qEdit4k"], ["best", "qBest"], ["audio", "qAudioFmt", "M4A"], ["audio-mp3", "qAudioFmt", "MP3"], ["audio-wav", "qAudioFmt", "WAV"], ["audio-flac", "qAudioFmt", "FLAC"], ["audio-opus", "qAudioFmt", "Opus"]];
   var SEP = "\u001f";
 
   var ui = {
@@ -18,7 +18,7 @@
     tabProject: $("tabProject"), tabConvert: $("tabConvert"), tabSettings: $("tabSettings"),
     viewProject: $("viewProject"), viewConvert: $("viewConvert"), viewSettings: $("viewSettings"),
     cFormat: $("cFormat"), cMode: $("cMode"), cQuality: $("cQuality"), cOut: $("cOut"), cGpu: $("cGpu"), cGpuLabel: $("cGpuLabel"), cAdd: $("cAdd"), cRows: $("cRows"),
-    sLanguage: $("sLanguage"), sOpenAtEnd: $("sOpenAtEnd"), sModel: $("sModel"), sNew: $("sNew"), sDuplicate: $("sDuplicate"), sDelete: $("sDelete"),
+    sLanguage: $("sLanguage"), sOpenAtEnd: $("sOpenAtEnd"), sDetectLink: $("sDetectLink"), sModel: $("sModel"), sNew: $("sNew"), sDuplicate: $("sDuplicate"), sDelete: $("sDelete"),
     sName: $("sName"), sRoot: $("sRoot"), sFolderList: $("sFolderList"), sAddFolder: $("sAddFolder"), sTree: $("sTree"), sRestore: $("sRestore")
   };
   var s = {
@@ -278,7 +278,7 @@
 
   function qualityOptions(select, value) {
     while (select.firstChild) select.removeChild(select.firstChild);
-    QUALITIES.forEach(function (q) { addOption(select, q[0], t(q[1])); });
+    QUALITIES.forEach(function (q) { addOption(select, q[0], t(q[1], q[2])); });
     select.title = t("qualityHint");
     select.setAttribute("aria-label", t("youtubeQuality"));
     select.value = value;
@@ -418,6 +418,7 @@
       case "start":
         if (row) { row.state = "running"; row.msg = ["downloading"]; renderLink(row); }
         ui.bar.style.width = "0";
+        setStatus("connecting");
         break;
       case "progress": {
         var p = ev.progress;
@@ -801,6 +802,7 @@
     invoke("set_language", { language: s.lang });
   });
   ui.sOpenAtEnd.addEventListener("change", persist);
+  ui.sDetectLink.addEventListener("change", function () { invoke("set_detect_link", { detect: ui.sDetectLink.checked }); });
   ui.sModel.addEventListener("change", function () {
     if (s.saveTimer) persist();
     disarm();
@@ -896,8 +898,26 @@
 
   listen("job", function (e) { onJob(e.payload); });
   listen("convert", function (e) { onConvert(e.payload); });
+  // Link recem-copiado fica pronto na lista; os ja concluidos saem. Nunca baixa sozinho.
+  function takeCopiedLinks() {
+    if (s.running || s.broken) return;
+    invoke("take_copied_links").then(function (links) {
+      if (!links.length || s.running) return;
+      var known = links.every(function (link) { return s.rows.some(function (r) { return r.url === link.url && r.state !== "ok" && r.state !== "warning"; }); });
+      if (known) return;
+      s.rows.filter(function (r) { return r.state === "ok" || r.state === "warning"; }).forEach(function (r) { r.node.li.remove(); });
+      s.rows = s.rows.filter(function (r) { return r.state !== "ok" && r.state !== "warning"; });
+      addLinks(links.map(function (link) { return link.url; }).join("\n")).then(function () {
+        if (s.tab !== "project") selectTab("project");
+        setStatus("linkDetected");
+        focusProject();
+      });
+    });
+  }
+
   listen("panel-shown", function () {
     focusProject();
+    takeCopiedLinks();
     fit();
   });
 
@@ -909,6 +929,7 @@
     ui.hotkey.textContent = b.hotkey.toUpperCase().replace(/CTRL/, "Ctrl").replace(/ALT/, "Alt").replace(/SHIFT/, "Shift");
     s.lang = pickLanguage(b.language);
     s.downloadOnly = b.downloadOnly;
+    ui.sDetectLink.checked = b.detectLink;
     ui.sLanguage.value = s.lang;
     if (s.lang !== b.language) invoke("set_language", { language: s.lang });
     if (b.configError) {

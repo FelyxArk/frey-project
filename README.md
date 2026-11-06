@@ -8,9 +8,11 @@ App de Windows que fica na bandeja e abre com um atalho (`Ctrl+Alt+P`): cria a e
 - **Só baixar:** baixa direto para uma pasta, sem criar estrutura.
 - **Modelos de pastas:** crie, duplique e edite os seus.
 - **Google Drive:** arquivos e pastas públicos, com subpastas e retomada de download.
-- **YouTube:** 1080p e 720p em H.264 MP4, 4K para edição (baixa até 4K e converte para H.264 MP4), melhor qualidade ou só áudio.
-- **Conversor:** MP4, MOV, MKV, WEBM, GIF, MP3, WAV e M4A, com GPU quando disponível.
+- **YouTube:** 1080p e 720p em H.264 MP4, 4K para edição (baixa até 4K e converte para H.264 MP4), melhor qualidade ou só áudio (M4A, MP3, WAV, FLAC ou Opus).
+- **Conversor:** MP4, MOV, MKV, WEBM, GIF, MP3, WAV, M4A, FLAC e Opus, com GPU quando disponível.
 - **Idiomas:** português, inglês, espanhol, francês, japonês, chinês simplificado, chinês tradicional, russo e árabe.
+
+Copiou um link do Drive ou do YouTube? Ao abrir o painel, ele já está na lista, pronto para baixar. O app não lê o conteúdo copiado em segundo plano, e dá para desligar isso em Configurações.
 
 Nada é apagado nem sobrescrito: arquivos que já existem são pulados e avisados.
 
@@ -30,6 +32,7 @@ Baixe apenas material seu ou que você tenha permissão para baixar. Os termos d
 
 - O **X** e o **Esc** só escondem o painel.
 - O **Sair** da bandeja remove o ícone, mas o processo pode continuar rodando até reiniciar o PC.
+- Em casos raros, se outra janela pegar o foco logo depois de o painel abrir, ele fica na tela até você usar o **X** ou `Ctrl+Alt+P`.
 - O `yt-dlp` incluído não se atualiza sozinho. Se os downloads do YouTube pararem, instale a versão mais nova do Frey Project.
 - As traduções ainda não tiveram revisão de falantes nativos.
 
@@ -39,6 +42,7 @@ Feito com [Tauri 2](https://tauri.app) e Rust. A interface é HTML, CSS e JavaSc
 
 ```
 cd src-tauri
+$env:CARGO_TARGET_DIR = "$env:LOCALAPPDATA\frey-project-target"
 cargo test
 cargo build --release
 ```

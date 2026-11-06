@@ -12,8 +12,9 @@ use std::time::Duration;
 const NO_WINDOW: u32 = 0x0800_0000;
 pub const FFMPEG_MISSING: &str = "err.ffmpegMissing";
 const VIDEO_CONTAINERS: [&str; 3] = ["mp4", "mov", "mkv"];
-const OUTPUT_FORMATS: [&str; 8] = ["mp4", "mov", "mkv", "webm", "gif", "mp3", "wav", "m4a"];
-const MEDIA_EXTENSIONS: [&str; 19] = [
+const OUTPUT_FORMATS: [&str; 10] = ["mp4", "mov", "mkv", "webm", "gif", "mp3", "wav", "m4a", "flac", "opus"];
+const MEDIA_EXTENSIONS: [&str; 20] = [
+    "opus",
     "mkv", "mp4", "mov", "avi", "webm", "flv", "wmv", "m4v", "ts", "mts", "m2ts", "3gp", "mp3", "wav", "flac", "m4a", "ogg", "aac", "mpg",
 ];
 
@@ -75,6 +76,8 @@ pub fn build_args(ext: &str, copy: Copy, crf: u32, gpu: Option<&str>) -> Vec<Str
     match ext {
         "mp3" => return strs(&["-vn", "-c:a", "libmp3lame", "-q:a", "2"]),
         "wav" => return strs(&["-vn", "-c:a", "pcm_s16le"]),
+        "flac" => return strs(&["-vn", "-c:a", "flac"]),
+        "opus" => return strs(&["-vn", "-c:a", "libopus", "-b:a", "192k"]),
         "m4a" => return strs(&["-vn", "-c:a", "aac", "-b:a", "192k"]),
         "gif" => return strs(&["-vf", "fps=15,scale=480:-2:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse", "-loop", "0"]),
         "webm" => {
@@ -348,7 +351,7 @@ mod tests {
         let dir = temp_dir("real");
         let Some(src) = sample(&dir, "1") else { return };
         let before = std::fs::read(&src).unwrap();
-        for (ext, mode) in [("mov", "copy"), ("mkv", "auto"), ("mp3", "auto"), ("wav", "auto"), ("gif", "auto")] {
+        for (ext, mode) in [("mov", "copy"), ("mkv", "auto"), ("mp3", "auto"), ("wav", "auto"), ("flac", "auto"), ("opus", "auto"), ("gif", "auto")] {
             let mut percents = Vec::new();
             let out = convert_file(&src, &options(ext, mode), &AtomicBool::new(false), &mut |p, _| percents.push(p)).unwrap();
             assert_eq!(extension(&out).unwrap(), ext);

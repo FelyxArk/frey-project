@@ -2,6 +2,7 @@
 // Fica na bandeja, cria a estrutura do projeto e baixa os links do Drive. Nao fala com o Premiere.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod clipboard;
 mod convert;
 mod drive;
 mod i18n;
@@ -16,6 +17,7 @@ use std::time::Instant;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
@@ -24,6 +26,7 @@ const DEFAULT_HOTKEY: &str = "ctrl+alt+p";
 const PANEL_WIDTH: f64 = 640.0;
 const TRAY_ID: &str = "main";
 const HIDDEN_ARG: &str = "--hidden";
+const JUST_OPENED: std::time::Duration = std::time::Duration::from_millis(1500);
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 struct Settings {
@@ -37,6 +40,8 @@ struct Settings {
     idioma: String,
     #[serde(default)]
     so_baixar: bool,
+    #[serde(default)]
+    ignorar_link_copiado: bool,
 }
 
 #[derive(Default)]
@@ -50,6 +55,10 @@ struct Shared {
     gpu: Mutex<Option<Option<String>>>,
     dialog_open: AtomicBool,
     pinned: AtomicBool,
+    /// O painel chegou a ter foco desde que abriu? Sem isso, perder o foco nao diz nada.
+    panel_had_focus: AtomicBool,
+    panel_shown_at: Mutex<Option<Instant>>,
+    clipboard: clipboard::Watch,
 }
 
 fn panel(app: &AppHandle) -> WebviewWindow {
@@ -100,8 +109,12 @@ fn show_panel(app: &AppHandle) {
             let _ = window.set_position(PhysicalPosition::new(x, y));
         }
     }
+    let state = app.state::<Shared>();
+    state.panel_had_focus.store(false, Ordering::SeqCst);
+    *state.panel_shown_at.lock().unwrap() = Some(Instant::now());
     let _ = window.show();
     let _ = window.set_focus();
+    take_foreground(window.hwnd().ok().map(|h| h.0 as *mut std::ffi::c_void));
     let _ = window.emit("panel-shown", ());
 }
 
@@ -114,8 +127,65 @@ fn toggle_panel(app: &AppHandle) {
     }
 }
 
+/// Abre a pasta no Explorer; se ela ja estiver aberta, traz essa janela em vez de abrir outra.
+/// Roda em outra thread porque perguntar ao Windows leva alguns décimos de segundo.
 fn open_folder(path: &Path) {
-    let _ = std::process::Command::new("explorer.exe").arg(path).spawn();
+    let path = path.to_path_buf();
+    std::thread::spawn(move || match find_open_folder(&path) {
+        Some(window) => bring_to_front(window),
+        None => {
+            let _ = std::process::Command::new("explorer.exe").arg(&path).spawn();
+        }
+    });
+}
+
+const FIND_FOLDER_SCRIPT: &str = "$want=[IO.Path]::GetFullPath($env:FREY_OPEN_PATH).TrimEnd('\\');foreach($w in (New-Object -ComObject Shell.Application).Windows()){try{$p=$w.Document.Folder.Self.Path;if($p -and $p.TrimEnd('\\') -ieq $want){[int64]$w.HWND;break}}catch{}}";
+
+/// Janela do Explorer ja aberta nesta pasta. Na duvida devolve None, e abre uma janela nova como antes.
+fn find_open_folder(path: &Path) -> Option<isize> {
+    use std::os::windows::process::CommandExt;
+    let mut child = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", FIND_FOLDER_SCRIPT])
+        .env("FREY_OPEN_PATH", path)
+        .creation_flags(0x0800_0000)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed().as_secs() < 5 => std::thread::sleep(std::time::Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
+    text.trim().parse::<isize>().ok().filter(|window| *window != 0)
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn IsIconic(window: *mut std::ffi::c_void) -> i32;
+    fn ShowWindow(window: *mut std::ffi::c_void, command: i32) -> i32;
+    fn SetForegroundWindow(window: *mut std::ffi::c_void) -> i32;
+}
+
+fn bring_to_front(window: isize) {
+    const SW_RESTORE: i32 = 9;
+    let window = window as *mut std::ffi::c_void;
+    unsafe {
+        if IsIconic(window) != 0 {
+            ShowWindow(window, SW_RESTORE);
+        }
+        SetForegroundWindow(window);
+    }
 }
 
 // ---------------------------------------------------------------- comandos do painel
@@ -134,6 +204,7 @@ struct Boot {
     language: String,
     visible: bool,
     download_only: bool,
+    detect_link: bool,
 }
 
 #[tauri::command]
@@ -143,6 +214,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
     let language = settings.idioma.clone();
     let visible = panel(&app).is_visible().unwrap_or(false);
     let download_only = settings.so_baixar;
+    let detect_link = !settings.ignorar_link_copiado;
     let hotkey = if settings.atalho.is_empty() { DEFAULT_HOTKEY.to_string() } else { settings.atalho.clone() };
     let running = state.cancel.lock().unwrap().is_some();
     let hotkey_error = state.hotkey_error.lock().unwrap().clone();
@@ -155,7 +227,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| names[0].clone());
             let dest = if Path::new(&settings.destino).is_dir() { settings.destino } else { String::new() };
-            Boot { models: names, default_name: cfg.default_name, model, dest, hotkey, hotkey_error, config_error: None, running, language, visible, download_only }
+            Boot { models: names, default_name: cfg.default_name, model, dest, hotkey, hotkey_error, config_error: None, running, language, visible, download_only, detect_link }
         }
         Err(e) => Boot {
             models: Vec::new(),
@@ -169,6 +241,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
             language,
             visible,
             download_only,
+            detect_link,
         },
     }
 }
@@ -800,6 +873,23 @@ fn tray_menu(app: &AppHandle, language: &str) -> tauri::Result<Menu<tauri::Wry>>
     Menu::with_items(app, &[&open, &quit])
 }
 
+/// Links da copia mais recente, uma unica vez por copia. Chamado ao abrir o painel.
+#[tauri::command]
+fn take_copied_links(app: AppHandle, state: State<Shared>) -> Vec<drive::Link> {
+    let is_new = state.clipboard.take_new();
+    if !is_new || state.settings.lock().unwrap().ignorar_link_copiado {
+        return Vec::new();
+    }
+    app.clipboard().read_text().map(|text| clipboard::links_in(&text)).unwrap_or_default()
+}
+
+#[tauri::command]
+fn set_detect_link(app: AppHandle, state: State<Shared>, detect: bool) {
+    let mut settings = state.settings.lock().unwrap();
+    settings.ignorar_link_copiado = !detect;
+    save_settings(&app, &settings);
+}
+
 #[tauri::command]
 fn set_download_only(app: AppHandle, state: State<Shared>, download_only: bool) {
     let mut settings = state.settings.lock().unwrap();
@@ -827,6 +917,28 @@ fn resize_panel(app: AppHandle, height: f64) {
 #[link(name = "user32")]
 extern "system" {
     fn GetForegroundWindow() -> *mut std::ffi::c_void;
+    fn GetWindowThreadProcessId(window: *mut std::ffi::c_void, process: *mut u32) -> u32;
+    fn AttachThreadInput(attach: u32, attach_to: u32, enable: i32) -> i32;
+}
+
+/// O Windows nega o foco a um app em segundo plano, como quando o atalho da Area de Trabalho
+/// chama a copia que ja esta na bandeja. Quem pediu o painel foi o usuario: une-se a fila de
+/// entrada da janela em primeiro plano so durante o pedido.
+fn take_foreground(own: Option<*mut std::ffi::c_void>) {
+    let Some(own) = own else { return };
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground == own || foreground.is_null() {
+            return;
+        }
+        let own_thread = GetWindowThreadProcessId(own, std::ptr::null_mut());
+        let foreground_thread = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
+        let attached = own_thread != foreground_thread && AttachThreadInput(own_thread, foreground_thread, 1) != 0;
+        SetForegroundWindow(own);
+        if attached {
+            AttachThreadInput(own_thread, foreground_thread, 0);
+        }
+    }
 }
 
 /// Durante uma troca o Windows pode nao ter janela em primeiro plano: aguarda definir antes de decidir.
@@ -862,6 +974,16 @@ fn remove_accent_border(window: &WebviewWindow) {
     }
 }
 
+/// So guarda o numero da copia atual, uma vez por segundo. O texto nao e lido aqui.
+fn watch_clipboard(app: &AppHandle) {
+    app.state::<Shared>().clipboard.start();
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        app.state::<Shared>().clipboard.tick();
+    });
+}
+
 fn register_hotkey(app: &AppHandle, text: &str) -> Result<(), String> {
     let shortcut: Shortcut = text.parse().map_err(|_| i18n::code("err.hotkeyInvalid", &[text]))?;
     app.global_shortcut()
@@ -887,12 +1009,17 @@ fn use_bundled_tools() {
 
 fn main() {
     use_bundled_tools();
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, _| {
+    let mut builder = tauri::Builder::default();
+    // Instancia de teste convive com o app instalado, com configuracao propria.
+    if std::env::var_os("FREY_PROJECT_TEST_INSTANCE").is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _| {
             if !args.iter().any(|a| a == HIDDEN_ARG) {
                 show_panel(app);
             }
-        }))
+        }));
+    }
+    builder
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(
@@ -908,7 +1035,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             boot, preview, parse_links, pick_folder, start_job, cancel_job, open_project, hide_panel, resize_panel,
             convert_tools, only_files, is_folder, pick_files, pick_out_dir, start_convert, open_converted, set_pinned,
-            get_models, save_models, restore_default_model, set_language, set_download_only
+            get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
@@ -916,6 +1043,11 @@ fn main() {
                 let _ = window.hide();
             }
             // Como nas barras de acesso rapido: perdeu o foco, some. O estado e o download continuam.
+            WindowEvent::Focused(true) => {
+                window.state::<Shared>().panel_had_focus.store(true, Ordering::SeqCst);
+            }
+            // Se o Windows negou o foco ao abrir, o painel fica visivel em vez de sumir.
+            WindowEvent::Focused(false) if !window.state::<Shared>().panel_had_focus.load(Ordering::SeqCst) => {}
             WindowEvent::Focused(false) => {
                 // Com o efeito de vidro o Windows dispara este evento sem o foco sair de fato:
                 // so esconde se outra janela estiver mesmo em primeiro plano.
@@ -923,6 +1055,12 @@ fn main() {
                 std::thread::spawn(move || {
                     if focus_really_left(&window) {
                         let state = window.state::<Shared>();
+                        // Logo depois de abrir, quem iniciou o programa pode recuperar o foco por um instante.
+                        let just_opened = state.panel_shown_at.lock().unwrap().is_some_and(|at| at.elapsed() < JUST_OPENED);
+                        if just_opened {
+                            take_foreground(window.hwnd().ok().map(|h| h.0 as *mut std::ffi::c_void));
+                            return;
+                        }
                         if !state.dialog_open.load(Ordering::SeqCst) && !state.pinned.load(Ordering::SeqCst) {
                             let _ = window.hide();
                         }
@@ -939,6 +1077,7 @@ fn main() {
                 .and_then(|raw| serde_json::from_str(&raw).ok())
                 .unwrap_or_default();
             let hotkey = if settings.atalho.is_empty() { DEFAULT_HOTKEY.to_string() } else { settings.atalho.clone() };
+            watch_clipboard(&handle);
             let tray_language = settings.idioma.clone();
             let state = app.state::<Shared>();
             *state.settings.lock().unwrap() = settings;

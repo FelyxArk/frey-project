@@ -210,11 +210,14 @@ pub struct Client {
     stall_limit: Duration,
     host: String,
     docs_host: String,
+    direct_host: String,
 }
 
 impl Client {
     pub fn new() -> Self {
-        Self::with_hosts("https://drive.google.com", "https://docs.google.com")
+        let mut client = Self::with_hosts("https://drive.google.com", "https://docs.google.com");
+        client.direct_host = "https://drive.usercontent.google.com".into();
+        client
     }
 
     fn with_hosts(host: &str, docs_host: &str) -> Self {
@@ -225,7 +228,7 @@ impl Client {
             .user_agent(USER_AGENT)
             .build()
             .into();
-        Client { agent, stall_limit: STALL_LIMIT, host: host.into(), docs_host: docs_host.into() }
+        Client { agent, stall_limit: STALL_LIMIT, host: host.into(), docs_host: docs_host.into(), direct_host: host.into() }
     }
 
     fn get(&self, url: &str, range_from: u64) -> Result<Response, ureq::Error> {
@@ -248,6 +251,15 @@ impl Client {
     /// Segue as paginas do Drive ate a resposta que traz o arquivo. Devolve tambem o nome visto na confirmacao.
     fn resolve_file(&self, id: &str) -> Result<(Response, String, Option<String>), Error> {
         let mut url = format!("{}/uc?id={id}", self.host);
+        // Caminho rapido: o servidor de download, sem redirecionamento nem pagina de confirmacao.
+        // Documentos do Google e erros nao passam por aqui: seguem o caminho completo abaixo.
+        let direct = format!("{}/download?id={id}&export=download&confirm=t", self.direct_host);
+        if let Ok(response) = self.get(&direct, 0) {
+            let is_html = header_text(&response, "content-type").is_some_and(|t| t.starts_with("text/html"));
+            if response.status().as_u16() < 400 && !is_html && response.headers().contains_key("content-disposition") {
+                return Ok((response, direct, None));
+            }
+        }
         let mut page_name = None;
         for _ in 0..4 {
             let mut response = self.get_checked(&url)?;
@@ -602,6 +614,39 @@ mod tests {
         let children = parse_folder_view(&html).unwrap();
         assert_eq!(children, vec![Child::File(ID_A.into(), "a.mp4".into()), Child::File(ID_B.into(), "Doc".into()), Child::Folder(ID_SUB.into(), "Sub & Cia".into())]);
         assert!(parse_folder_view("<html></html>").is_err());
+    }
+
+    #[test]
+    fn acesso_direto_dispensa_a_pagina_de_confirmacao() {
+        let path = format!("/download?id={ID_A}&export=download&confirm=t");
+        let (host, _, log) = serve(HashMap::from([(path, file_route("grande.mov", b"direto"))]));
+        let dest = temp_dir("fastpath");
+        run(&Client::with_hosts(&host, &host), &file_url(ID_A), "file", &dest).unwrap();
+        assert_eq!(fs::read(dest.join("grande.mov")).unwrap(), b"direto");
+        assert!(!log.lock().unwrap().iter().any(|l| l.starts_with("/uc")), "nao passa pelo caminho antigo");
+    }
+
+    #[test]
+    fn acesso_direto_com_pagina_html_cai_no_caminho_completo() {
+        let direct = format!("/download?id={ID_A}&export=download&confirm=t");
+        let (host, ..) = serve(HashMap::from([
+            (direct, html_route("<html>sem acesso</html>")),
+            (format!("/uc?id={ID_A}"), file_route("a.mp4", b"pelo caminho antigo")),
+        ]));
+        let dest = temp_dir("fallback");
+        run(&Client::with_hosts(&host, &host), &file_url(ID_A), "file", &dest).unwrap();
+        assert_eq!(fs::read(dest.join("a.mp4")).unwrap(), b"pelo caminho antigo");
+    }
+
+    #[test]
+    fn acesso_direto_retoma_o_parcial() {
+        let direct = format!("/download?id={ID_A}&export=download&confirm=t");
+        let (host, _, log) = serve(HashMap::from([(direct, file_route("a.mp4", b"0123456789"))]));
+        let dest = temp_dir("fastresume");
+        fs::write(dest.join("a.mp4.part"), b"01234").unwrap();
+        run(&Client::with_hosts(&host, &host), &file_url(ID_A), "file", &dest).unwrap();
+        assert_eq!(fs::read(dest.join("a.mp4")).unwrap(), b"0123456789");
+        assert!(log.lock().unwrap().iter().any(|l| l.ends_with("Some(5)")));
     }
 
     #[test]

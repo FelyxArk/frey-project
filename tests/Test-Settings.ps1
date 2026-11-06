@@ -5,7 +5,7 @@
 # Uso: powershell -NoProfile -ExecutionPolicy Bypass -File Test-Settings.ps1 [-OutDir pasta]
 param([string]$OutDir = (Join-Path $env:TEMP "FreyProjectSettings-$([guid]::NewGuid().ToString('N'))"))
 $ErrorActionPreference = 'Stop'
-$exe = Join-Path $PSScriptRoot '..\src-tauri\target\release\frey-project.exe'
+$exe = Join-Path $env:LOCALAPPDATA 'frey-project-target\release\frey-project.exe'
 $dest = Join-Path $OutDir 'dest'
 Remove-Item -LiteralPath $OutDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -220,8 +220,11 @@ try {
   }
   Check 'So baixar nao criou nenhuma pasta' ((@(Get-ChildItem -LiteralPath $dest -Directory | ForEach-Object Name) -join '|') -eq $before)
   Shot '4d-baixado'
-  Click 'go'; Start-Sleep -Milliseconds 300
-  if ($env:FREY_TEST_DRIVE_FILE) { Check 'clicar de novo sem nada pendente nao baixa duas vezes' (@(Get-ChildItem -LiteralPath $dest -File).Count -eq 1) }
+  # Sem o arquivo real o link falhou, e clicar de novo seria uma nova tentativa com o app ocupado.
+  if ($env:FREY_TEST_DRIVE_FILE) {
+    Click 'go'; Start-Sleep -Milliseconds 300
+    Check 'clicar de novo sem nada pendente nao baixa duas vezes' (@(Get-ChildItem -LiteralPath $dest -File).Count -eq 1)
+  }
   [void](Eval 'document.querySelector("#rows .row button").click()'); Start-Sleep -Milliseconds 300
   Click 'modeCreate'; Start-Sleep -Milliseconds 300
   Check 'voltar a Criar pastas mostra o nome' ((Eval 'document.getElementById("queryRow").hidden') -eq $false -and (Eval 'document.activeElement.id') -eq 'name')

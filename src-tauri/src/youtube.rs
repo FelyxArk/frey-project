@@ -25,12 +25,26 @@ pub fn quality_args(quality: &str) -> Vec<&'static str> {
         "best" => vec!["-S", "res,fps"],
         // Maior resolucao ate 4K, em SDR: o app reencoda depois para H.264 de 8 bits, e HDR ficaria com a cor errada.
         "edit4k" => vec!["-S", "hdr:sdr,res:2160,fps", "--merge-output-format", "mkv"],
-        "audio" => vec!["-f", "ba/b", "-x", "--audio-format", "m4a"],
+        "audio" => vec!["-f", "ba/b", "-x", "--audio-format", "m4a", "--audio-quality", "0"],
+        "audio-mp3" => vec!["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0"],
+        "audio-wav" => vec!["-f", "ba/b", "-x", "--audio-format", "wav"],
+        "audio-flac" => vec!["-f", "ba/b", "-x", "--audio-format", "flac"],
+        "audio-opus" => vec!["-f", "ba/b", "-x", "--audio-format", "opus", "--audio-quality", "0"],
         _ => vec!["-S", "vcodec:h264,res:1080,acodec:aac", "--merge-output-format", "mp4"],
     }
 }
 
-fn build_args(url: &str, dest: &Path, quality: &str) -> Vec<String> {
+/// Pular a lista HLS economiza cerca de 1 s e nao muda o formato escolhido em videos comuns.
+/// Transmissoes ao vivo precisam dela: nesse caso o download tenta de novo sem o atalho.
+const SKIP_HLS: &str = "youtube:skip=hls";
+const RETRY_WITH_HLS: &str = "retry-with-hls";
+
+fn needs_hls(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("no video formats found") || lower.contains("requested format is not available") || lower.contains("live stream")
+}
+
+fn build_args(url: &str, dest: &Path, quality: &str, skip_hls: bool) -> Vec<String> {
     let mut args: Vec<String> = vec!["-P".into(), dest.display().to_string()];
     let fixed = [
         "--ignore-config", "--no-playlist", "--no-overwrites", "--continue", "--newline", "--encoding", "utf-8",
@@ -42,6 +56,13 @@ fn build_args(url: &str, dest: &Path, quality: &str) -> Vec<String> {
     ];
     args.extend(fixed.iter().map(|s| s.to_string()));
     args.extend(quality_args(quality).iter().map(|s| s.to_string()));
+    // Sem isto, extrair audio apagaria um arquivo que ja existia com o mesmo nome (ex.: o .m4a de antes).
+    if quality.starts_with("audio") {
+        args.push("--keep-video".to_string());
+    }
+    if skip_hls {
+        args.extend(["--extractor-args".to_string(), SKIP_HLS.to_string()]);
+    }
     args.push("--".into());
     args.push(url.to_string());
     args
@@ -113,16 +134,34 @@ fn existing_files(dest: &Path) -> HashSet<PathBuf> {
         .unwrap_or_default()
 }
 
+/// Apaga so o que este download criou e nao e o resultado: nunca um arquivo que ja estava la.
+fn remove_intermediates(dest: &Path, before: &HashSet<PathBuf>, finals: &[PathBuf]) {
+    let stems: HashSet<_> = finals.iter().filter_map(|p| p.file_stem().map(|s| s.to_os_string())).collect();
+    for file in existing_files(dest) {
+        let is_ours = file.file_stem().is_some_and(|stem| stems.contains(stem));
+        if is_ours && file.is_file() && !before.contains(&file) && !finals.contains(&file) {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
 pub fn download(url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
     let tool = find_tool("yt-dlp").ok_or_else(|| Error::Message(MISSING.into()))?;
     run(&tool, url, dest, quality, cancel, on_progress)
 }
 
 fn run(tool: &Path, url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
+    match attempt(tool, url, dest, quality, true, cancel, on_progress) {
+        Err(Error::Message(message)) if message == RETRY_WITH_HLS => attempt(tool, url, dest, quality, false, cancel, on_progress),
+        other => other,
+    }
+}
+
+fn attempt(tool: &Path, url: &str, dest: &Path, quality: &str, skip_hls: bool, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
     std::fs::create_dir_all(dest)?;
     let before = existing_files(dest);
     let mut child = Command::new(tool)
-        .args(build_args(url, dest, quality))
+        .args(build_args(url, dest, quality, skip_hls))
         .env("PYTHONUTF8", "1")
         .creation_flags(NO_WINDOW)
         .stdin(Stdio::null())
@@ -146,9 +185,11 @@ fn run(tool: &Path, url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, 
     });
 
     let mut outcome = Outcome { downloaded: 0, skipped: 0, files: Vec::new() };
+    let mut finals: Vec<PathBuf> = Vec::new();
     let mut handle = |line: String, outcome: &mut Outcome| {
         if let Some(path) = line.strip_prefix(DONE_PREFIX) {
             let path = PathBuf::from(path.trim());
+            finals.push(path.clone());
             if before.contains(&path) {
                 outcome.skipped += 1;
             } else {
@@ -180,7 +221,13 @@ fn run(tool: &Path, url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, 
     }
 
     if !status.success() {
+        if skip_hls && needs_hls(&text) {
+            return Err(Error::Message(RETRY_WITH_HLS.into()));
+        }
         return Err(Error::Message(friendly_error(&text)));
+    }
+    if quality.starts_with("audio") {
+        remove_intermediates(dest, &before, &finals);
     }
     if outcome.downloaded + outcome.skipped == 0 {
         return Err(Error::Message("err.ytNoFile".into()));
@@ -209,6 +256,56 @@ mod tests {
     const URL: &str = "https://www.youtube.com/watch?v=abc123";
 
     #[test]
+    fn opcoes_de_audio_pedem_o_formato_certo() {
+        for (quality, format) in [("audio", "m4a"), ("audio-mp3", "mp3"), ("audio-wav", "wav"), ("audio-flac", "flac"), ("audio-opus", "opus")] {
+            let args = quality_args(quality);
+            assert!(args.contains(&"-x"), "{quality}");
+            assert!(args.windows(2).any(|w| w == ["--audio-format", format]), "{quality}");
+        }
+    }
+
+    #[test]
+    fn extrair_audio_nao_apaga_arquivo_que_ja_existia() {
+        let dir = temp_dir("keep");
+        let dest = dir.join("saida");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("Clipe.m4a"), "meu arquivo").unwrap();
+        std::fs::write(dest.join("Outro.webm"), "outro").unwrap();
+        let tool = fake(&dir, "echo x> \"%~2\\Clipe.webm\"\r\necho x> \"%~2\\Clipe.mp3\"\r\necho FREYDONE^|%~2\\Clipe.mp3");
+        let outcome = run(&tool, URL, &dest, "audio-mp3", &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(outcome.files, vec![dest.join("Clipe.mp3")]);
+        assert_eq!(std::fs::read_to_string(dest.join("Clipe.m4a")).unwrap(), "meu arquivo");
+        assert!(dest.join("Outro.webm").exists(), "arquivo de outro video fica");
+        assert!(!dest.join("Clipe.webm").exists(), "intermediario criado agora sai");
+    }
+
+    #[test]
+    fn audio_pede_para_manter_e_video_nao() {
+        assert!(build_args(URL, Path::new("D:\\p"), "audio-mp3", true).iter().any(|a| a == "--keep-video"));
+        assert!(!build_args(URL, Path::new("D:\\p"), "1080", true).iter().any(|a| a == "--keep-video"));
+    }
+
+    #[test]
+    fn sem_lista_hls_tenta_de_novo_com_ela() {
+        let dir = temp_dir("hls");
+        let script = "echo %* | findstr /c:\"skip=hls\" >nul && (echo ERROR: [youtube] No video formats found 1>&2 & exit /b 1)\r\necho x> \"%~2\\Live.mp4\"\r\necho FREYDONE^|%~2\\Live.mp4";
+        let tool = fake(&dir, script);
+        let dest = dir.join("saida");
+        let outcome = run(&tool, URL, &dest, "1080", &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(outcome.files, vec![dest.join("Live.mp4")]);
+    }
+
+    #[test]
+    fn outros_erros_nao_repetem_o_download() {
+        let dir = temp_dir("noretry");
+        let count = dir.join("tentativas.txt");
+        let tool = fake(&dir, &format!("echo x>> \"{}\"\r\necho ERROR: Private video 1>&2\r\nexit /b 1", count.display()));
+        let result = run(&tool, URL, &dir.join("s"), "1080", &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(result.unwrap_err(), Error::Message("err.ytPrivate".into()));
+        assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
+    }
+
+    #[test]
     fn progresso_com_campos_ausentes_e_titulo_com_barra() {
         let p = parse_progress("FREYPROG|1048576|NA|2097152.0|NA|NA|Título | com barra").unwrap();
         assert_eq!((p.done, p.total, p.files_done, p.files_total), (1048576, Some(2097152), 0, 1));
@@ -232,7 +329,9 @@ mod tests {
 
     #[test]
     fn argumentos_protegem_contra_sobrescrita_e_link_como_opcao() {
-        let args = build_args(URL, Path::new("D:\\p"), "1080");
+        let args = build_args(URL, Path::new("D:\\p"), "1080", true);
+        assert!(args.windows(2).any(|w| w == ["--extractor-args", SKIP_HLS]));
+        assert!(!build_args(URL, Path::new("D:\\p"), "1080", false).iter().any(|a| a == SKIP_HLS));
         assert_eq!(&args[..2], ["-P", "D:\\p"]);
         for needed in ["--no-overwrites", "--continue", "--ignore-config", "--no-playlist", "--no-simulate"] {
             assert!(args.iter().any(|a| a == needed), "{needed}");

@@ -7,7 +7,7 @@ param(
   [string]$Url = 'https://www.youtube.com/watch?v=aqz-KE-bpKQ'
 )
 $ErrorActionPreference = 'Stop'
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot '..\src-tauri\target-dist\release\frey-project.exe' }
+if (-not $Exe) { $Exe = Join-Path $env:LOCALAPPDATA 'frey-project-target\release\frey-project.exe' }
 if (Get-Process frey-project -ErrorAction SilentlyContinue) { throw 'O Frey Project esta aberto. Encerre antes de testar.' }
 Remove-Item -LiteralPath $OutDir -Recurse -Force -ErrorAction SilentlyContinue
 $dest = Join-Path $OutDir 'dest'; $cfg = Join-Path $OutDir 'config'

@@ -1,10 +1,11 @@
 ﻿# Gera dist\Frey-Project-Setup-<versao>.exe com o app e todas as dependencias.
-# Compila em pasta propria (target-dist) para nao brigar com uma copia aberta do app.
+# Compila em pasta propria para nao brigar com uma copia aberta do app. Use -BuildDir num disco com 7 GB livres.
 # Precisa de: Rust, Inno Setup 6, e ffmpeg, ffprobe, yt-dlp e deno no PATH. Copia esses programas para o instalador.
 param(
   [string]$Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
   # Instalador offline oficial da Microsoft: https://developer.microsoft.com/microsoft-edge/webview2/
-  [Parameter(Mandatory)][string]$WebView2Installer
+  [Parameter(Mandatory)][string]$WebView2Installer,
+  [string]$BuildDir = (Join-Path $env:LOCALAPPDATA 'frey-project-target')
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -26,7 +27,7 @@ $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Envir
 
 Write-Host '== compilando o app'
 Push-Location (Join-Path $root 'src-tauri')
-$env:CARGO_TARGET_DIR = Join-Path $root 'src-tauri\target-dist'
+$env:CARGO_TARGET_DIR = $BuildDir
 & cargo build --release
 if ($LASTEXITCODE) { throw 'cargo build falhou' }
 Remove-Item Env:CARGO_TARGET_DIR
@@ -35,7 +36,7 @@ Pop-Location
 Write-Host '== preparando os arquivos'
 Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 foreach ($dir in 'bin', 'licenses', 'webview2') { New-Item -ItemType Directory -Force -Path (Join-Path $stage $dir) | Out-Null }
-Copy-Item (Join-Path $root 'src-tauri\target-dist\release\frey-project.exe') $stage
+Copy-Item (Join-Path $BuildDir 'release\frey-project.exe') $stage
 $ffmpeg = Resolve-Tool 'ffmpeg'
 foreach ($name in 'ffmpeg', 'ffprobe', 'yt-dlp', 'deno') { Copy-Item (Resolve-Tool $name).FullName (Join-Path $stage 'bin') }
 $license = Join-Path (Split-Path -Parent $ffmpeg.DirectoryName) 'LICENSE'
