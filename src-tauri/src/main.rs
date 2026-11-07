@@ -7,6 +7,7 @@ mod convert;
 mod drive;
 mod i18n;
 mod models;
+mod outside_click;
 mod youtube;
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -54,9 +55,6 @@ struct Shared {
     last_converted: Mutex<Option<PathBuf>>,
     gpu: Mutex<Option<Option<String>>>,
     dialog_open: AtomicBool,
-    pinned: AtomicBool,
-    /// O painel chegou a ter foco desde que abriu? Sem isso, perder o foco nao diz nada.
-    panel_had_focus: AtomicBool,
     panel_shown_at: Mutex<Option<Instant>>,
     clipboard: clipboard::Watch,
 }
@@ -94,9 +92,20 @@ fn save_settings(app: &AppHandle, settings: &Settings) {
     }
 }
 
+/// Ponto na borda direita do monitor mais a direita: nenhuma tela mostra a janela a partir dali.
+/// O Windows so aceita criar a janela com a origem dentro de um monitor, por isso nao vai mais longe.
+fn beyond_the_screens(app: &AppHandle) -> Option<(f64, f64)> {
+    let monitors = app.available_monitors().ok()?;
+    let right = monitors.iter().max_by_key(|m| m.position().x + m.size().width as i32)?;
+    let scale = right.scale_factor();
+    let x = (right.position().x + right.size().width as i32) as f64 / scale - 1.0;
+    Some((x, right.position().y as f64 / scale))
+}
+
 /// Abre no monitor do cursor, no terco superior, como as barras de acesso rapido.
 fn show_panel(app: &AppHandle) {
     let window = panel(app);
+    let mut placed = false;
     if let (Ok(cursor), Ok(monitors), Ok(size)) = (app.cursor_position(), app.available_monitors(), window.outer_size()) {
         let monitor = monitors.iter().find(|m| {
             let (p, s) = (m.position(), m.size());
@@ -106,11 +115,14 @@ fn show_panel(app: &AppHandle) {
             let (p, s) = (m.position(), m.size());
             let x = p.x + (s.width as i32 - size.width as i32) / 2;
             let y = p.y + (s.height as f64 * 0.2) as i32;
-            let _ = window.set_position(PhysicalPosition::new(x, y));
+            placed = window.set_position(PhysicalPosition::new(x, y)).is_ok();
         }
     }
+    // A janela nasce fora da tela: sem o cursor em um monitor conhecido, nao pode abrir la.
+    if !placed {
+        let _ = window.center();
+    }
     let state = app.state::<Shared>();
-    state.panel_had_focus.store(false, Ordering::SeqCst);
     *state.panel_shown_at.lock().unwrap() = Some(Instant::now());
     let _ = window.show();
     let _ = window.set_focus();
@@ -898,11 +910,6 @@ fn set_download_only(app: AppHandle, state: State<Shared>, download_only: bool) 
 }
 
 #[tauri::command]
-fn set_pinned(state: State<Shared>, pinned: bool) {
-    state.pinned.store(pinned, Ordering::SeqCst);
-}
-
-#[tauri::command]
 fn hide_panel(app: AppHandle) {
     let _ = panel(&app).hide();
 }
@@ -1034,7 +1041,7 @@ fn main() {
         .manage(Shared::default())
         .invoke_handler(tauri::generate_handler![
             boot, preview, parse_links, pick_folder, start_job, cancel_job, open_project, hide_panel, resize_panel,
-            convert_tools, only_files, is_folder, pick_files, pick_out_dir, start_convert, open_converted, set_pinned,
+            convert_tools, only_files, is_folder, pick_files, pick_out_dir, start_convert, open_converted,
             get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link
         ])
         .on_window_event(|window, event| match event {
@@ -1042,28 +1049,14 @@ fn main() {
                 api.prevent_close();
                 let _ = window.hide();
             }
-            // Como nas barras de acesso rapido: perdeu o foco, some. O estado e o download continuam.
-            WindowEvent::Focused(true) => {
-                window.state::<Shared>().panel_had_focus.store(true, Ordering::SeqCst);
-            }
-            // Se o Windows negou o foco ao abrir, o painel fica visivel em vez de sumir.
-            WindowEvent::Focused(false) if !window.state::<Shared>().panel_had_focus.load(Ordering::SeqCst) => {}
+            // Perder o foco nao esconde: o painel fica aberto para receber arquivos do Explorer.
+            // Logo depois de abrir, quem iniciou o programa pode recuperar o foco por um instante.
             WindowEvent::Focused(false) => {
-                // Com o efeito de vidro o Windows dispara este evento sem o foco sair de fato:
-                // so esconde se outra janela estiver mesmo em primeiro plano.
                 let window = window.clone();
                 std::thread::spawn(move || {
-                    if focus_really_left(&window) {
-                        let state = window.state::<Shared>();
-                        // Logo depois de abrir, quem iniciou o programa pode recuperar o foco por um instante.
-                        let just_opened = state.panel_shown_at.lock().unwrap().is_some_and(|at| at.elapsed() < JUST_OPENED);
-                        if just_opened {
-                            take_foreground(window.hwnd().ok().map(|h| h.0 as *mut std::ffi::c_void));
-                            return;
-                        }
-                        if !state.dialog_open.load(Ordering::SeqCst) && !state.pinned.load(Ordering::SeqCst) {
-                            let _ = window.hide();
-                        }
+                    let just_opened = window.state::<Shared>().panel_shown_at.lock().unwrap().is_some_and(|at| at.elapsed() < JUST_OPENED);
+                    if just_opened && focus_really_left(&window) {
+                        take_foreground(window.hwnd().ok().map(|h| h.0 as *mut std::ffi::c_void));
                     }
                 });
             }
@@ -1071,7 +1064,26 @@ fn main() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            remove_accent_border(&panel(&handle));
+            // Nascer escondida faz o painel recusar arquivos arrastados do Explorer.
+            // Por isso a janela nasce visivel, sem foco e alem da borda da tela, e so entao se esconde.
+            let config = handle.config().app.windows.iter().find(|w| w.label == "panel").cloned().expect("janela do painel na configuracao");
+            let mut builder = WebviewWindowBuilder::from_config(&handle, &config)?;
+            if let Some((x, y)) = beyond_the_screens(&handle) {
+                builder = builder.position(x, y);
+            }
+            let window = builder.build()?;
+            let _ = window.hide();
+            remove_accent_border(&window);
+            if let Ok(hwnd) = window.hwnd() {
+                let (busy, closing) = (handle.clone(), window.clone());
+                outside_click::watch(
+                    hwnd.0 as isize,
+                    move || busy.state::<Shared>().dialog_open.load(Ordering::SeqCst),
+                    move || {
+                        let _ = closing.hide();
+                    },
+                );
+            }
             let settings: Settings = settings_path(&handle)
                 .and_then(|p| std::fs::read_to_string(p).ok())
                 .and_then(|raw| serde_json::from_str(&raw).ok())

@@ -16,6 +16,8 @@ Copiou um link do Drive ou do YouTube? Ao abrir o painel, ele já está na lista
 
 Nada é apagado nem sobrescrito: arquivos que já existem são pulados e avisados.
 
+O painel fica aberto enquanto você usa outras janelas, então dá para arrastar arquivos do Explorer para ele. Para fechar, clique duas vezes fora do painel, use o **X**, o **Esc** ou `Ctrl+Alt+P`. Fechar só esconde: downloads e conversões continuam.
+
 ## Instalar
 
 Baixe o instalador em [Releases](../../releases). Ele instala só para o seu usuário, sem pedir administrador, e já traz tudo o que o app precisa.
@@ -30,9 +32,7 @@ Baixe apenas material seu ou que você tenha permissão para baixar. Os termos d
 
 ## Problemas conhecidos
 
-- O **X** e o **Esc** só escondem o painel.
 - O **Sair** da bandeja remove o ícone, mas o processo pode continuar rodando até reiniciar o PC.
-- Em casos raros, se outra janela pegar o foco logo depois de o painel abrir, ele fica na tela até você usar o **X** ou `Ctrl+Alt+P`.
 - O `yt-dlp` incluído não se atualiza sozinho. Se os downloads do YouTube pararem, instale a versão mais nova do Frey Project.
 - As traduções ainda não tiveram revisão de falantes nativos.
 
@@ -57,6 +57,8 @@ powershell -ExecutionPolicy Bypass -File tests/Test-Settings.ps1
 ```
 
 `Test-Settings.ps1` roda no app real com configuração temporária. Para incluir um download real, defina `FREY_TEST_DRIVE_FILE` com o link público de um arquivo pequeno.
+
+`Test-Panel.ps1` confere arrastar do Explorer e o clique duplo fora do painel. Ele move o mouse de verdade por cerca de 30 segundos: rode com `powershell -NoProfile -STA -ExecutionPolicy Bypass -File tests/Test-Panel.ps1 -OutDir <pasta temporária>`.
 
 Para gerar o instalador, com Inno Setup 6 e as ferramentas no PATH:
 

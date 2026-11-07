@@ -12,7 +12,7 @@
 
   var ui = {
     shell: $("shell"), name: $("name"), model: $("model"), dest: $("dest"), tree: $("tree"), links: $("links"),
-    rows: $("rows"), status: $("status"), go: $("go"), cancel: $("cancel"), open: $("open"), hide: $("hide"), pin: $("pin"), actions: $("actions"),
+    rows: $("rows"), status: $("status"), go: $("go"), cancel: $("cancel"), open: $("open"), hide: $("hide"), actions: $("actions"),
     track: $("progressTrack"), bar: $("progressBar"), hotkey: $("hotkey"), convertTo: $("convertTo"),
     modeCreate: $("modeCreate"), modeDownload: $("modeDownload"), queryRow: $("queryRow"), fieldModel: $("fieldModel"), destLabel: $("destLabel"),
     tabProject: $("tabProject"), tabConvert: $("tabConvert"), tabSettings: $("tabSettings"),
@@ -22,7 +22,7 @@
     sName: $("sName"), sRoot: $("sRoot"), sFolderList: $("sFolderList"), sAddFolder: $("sAddFolder"), sTree: $("sTree"), sRestore: $("sRestore")
   };
   var s = {
-    lang: "pt", tab: "project", pinned: false, running: false, projectOpen: false, convertOpen: false, confirmNext: false, broken: false,
+    lang: "pt", tab: "project", running: false, projectOpen: false, convertOpen: false, confirmNext: false, broken: false,
     rows: [], files: [], nextId: 1, folders: [], defaultFolder: "", dest: "", outDir: "", requestSeq: 0, settingsSeq: 0, toolsChecked: false, gpu: "detectingGpu",
     status: "", statusKind: "", root: "", downloadOnly: false, needsName: true, models: [], savedNames: [], modelIndex: 0, saveTimer: null, armed: null
   };
@@ -113,12 +113,6 @@
     ui.dest.classList.toggle("is-empty", !s.dest);
   }
 
-  function syncPin() {
-    // Na aba Converter o painel precisa ficar aberto para receber arquivos arrastados do Explorer.
-    invoke("set_pinned", { pinned: s.pinned || s.tab === "convert" });
-    ui.pin.setAttribute("aria-pressed", String(s.pinned));
-  }
-
   function refreshControls() {
     if (s.tab === "convert") {
       var again = s.files.some(function (f) { return f.state === "fail" || f.state === "cancelled"; });
@@ -184,12 +178,11 @@
       x[1].setAttribute("aria-selected", String(x[0] === tab));
       x[2].hidden = x[0] !== tab;
     });
-    syncPin();
     disarm();
     refreshControls();
     if (tab === "convert") checkTools();
     if (tab === "settings") refreshSettingsTree();
-    if (tab !== "settings" && s.status === "saved") setStatus("");
+    if ((tab !== "settings" && s.status === "saved") || (tab !== "project" && s.status === "linkDetected")) setStatus("");
     fit();
   }
 
@@ -760,7 +753,6 @@
   ui.tabProject.addEventListener("click", function () { selectTab("project"); focusProject(); });
   ui.tabConvert.addEventListener("click", function () { selectTab("convert"); });
   ui.tabSettings.addEventListener("click", function () { selectTab("settings"); });
-  ui.pin.addEventListener("click", function () { s.pinned = !s.pinned; syncPin(); });
   ui.go.addEventListener("click", function () {
     if (s.tab === "convert") { startConvert(); return; }
     var confirm = s.confirmNext;

@@ -112,6 +112,7 @@ try {
   }
 
   # Desligar a opcao
+  [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
   [void](Eval 'document.getElementById("tabSettings").click()'); Start-Sleep -Milliseconds 300
   Check 'opcao vem ligada' ((Eval 'document.getElementById("sDetectLink").checked') -eq $true)
   [void](Eval 'document.getElementById("sDetectLink").click()'); Start-Sleep -Milliseconds 500

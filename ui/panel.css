@@ -36,7 +36,6 @@ button { cursor: pointer; }
 .titlebar .icon { display: grid; place-items: center; width: 32px; }
 .titlebar .icon:hover { background: var(--fk-raised); color: var(--fk-text); }
 .titlebar .icon--close:hover { background: var(--fk-danger-bg); color: var(--fk-danger); }
-.titlebar .icon[aria-pressed="true"] { color: var(--fk-focus); }
 .titlebar svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round; }
 .titlebar__right { margin-inline-start: auto; }
 .tabs { display: flex; gap: 14px; height: 100%; }
