@@ -8,6 +8,7 @@
   var LANGUAGES = [["pt", "Português", "pt-BR"], ["en", "English", "en"], ["es", "Español", "es"], ["fr", "Français", "fr"], ["ja", "日本語", "ja"], ["zh", "简体中文", "zh-Hans"], ["zht", "繁體中文", "zh-Hant"], ["ru", "Русский", "ru"], ["ar", "العربية", "ar"]];
   var FORMATS = [["mp4", "MP4", "fmtVideo"], ["mov", "MOV", "fmtVideo"], ["mkv", "MKV", "fmtVideo"], ["webm", "WEBM", "fmtVideo"], ["gif", "GIF", "fmtAnimated"], ["mp3", "MP3", "fmtAudio"], ["wav", "WAV", "fmtAudio"], ["m4a", "M4A", "fmtAudio"], ["flac", "FLAC", "fmtAudio"], ["opus", "Opus", "fmtAudio"]];
   var QUALITIES = [["1080", "q1080"], ["720", "q720"], ["edit4k", "qEdit4k"], ["best", "qBest"], ["audio", "qAudioFmt", "M4A"], ["audio-mp3", "qAudioFmt", "MP3"], ["audio-wav", "qAudioFmt", "WAV"], ["audio-flac", "qAudioFmt", "FLAC"], ["audio-opus", "qAudioFmt", "Opus"]];
+  var VIDEO_KINDS = { youtube: "kindYoutube", x: "kindX", instagram: "kindInstagram", tiktok: "kindTiktok" };
   var SEP = "\u001f";
 
   var ui = {
@@ -269,11 +270,12 @@
     select.value = value;
   }
 
-  function qualityOptions(select, value) {
+  function qualityOptions(select, value, kind) {
     while (select.firstChild) select.removeChild(select.firstChild);
-    QUALITIES.forEach(function (q) { addOption(select, q[0], t(q[1], q[2])); });
+    // Redes sociais nao oferecem 4K: a opcao so geraria uma conversao demorada.
+    QUALITIES.forEach(function (q) { if (q[0] !== "edit4k" || kind === "youtube") addOption(select, q[0], t(q[1], q[2])); });
     select.title = t("qualityHint");
-    select.setAttribute("aria-label", t("youtubeQuality"));
+    select.setAttribute("aria-label", t("videoQuality"));
     select.value = value;
   }
 
@@ -282,15 +284,15 @@
       var select = document.createElement("select");
       select.addEventListener("change", function () { row.folder = select.value; row.folderChosen = true; });
       var selects = [select];
-      if (row.kind === "youtube") {
+      if (VIDEO_KINDS[row.kind]) {
         var quality = document.createElement("select");
         quality.className = "row__quality";
         quality.addEventListener("change", function () { row.quality = quality.value; });
         row.qualitySelect = quality;
         selects.unshift(quality);
       }
-      var kinds = { folder: "kindFolder", youtube: "kindYoutube", file: "kindFile" };
-      row.node = makeRow(ui.rows, kinds[row.kind], row.url, selects, function () {
+      var kinds = { folder: "kindFolder", file: "kindFile" };
+      row.node = makeRow(ui.rows, VIDEO_KINDS[row.kind] || kinds[row.kind], row.url, selects, function () {
         s.rows = s.rows.filter(function (r) { return r !== row; });
       });
     }
@@ -305,7 +307,7 @@
       renderLink(row);
       folderOptions(row.node.folder, row.folder);
       row.node.folder.setAttribute("aria-label", t("downloadTo"));
-      if (row.qualitySelect) qualityOptions(row.qualitySelect, row.quality);
+      if (row.qualitySelect) qualityOptions(row.qualitySelect, row.quality, row.kind);
     });
     fit();
   }
@@ -853,7 +855,7 @@
   document.addEventListener("paste", function (e) {
     if (s.running || s.tab !== "project") return;
     var text = e.clipboardData ? e.clipboardData.getData("text") : "";
-    if (!/(drive|docs)\.google\.com\/|youtube\.com\/|youtu\.be\//.test(text) && e.target !== ui.links) return;
+    if (!/(drive|docs)\.google\.com\/|youtube\.com\/|youtu\.be\/|(x|twitter)\.com\/|instagram\.com\/|tiktok\.com\//.test(text) && e.target !== ui.links) return;
     e.preventDefault();
     addLinks(text).then(function (count) {
       setStatus(count ? "" : "noLinkFound", count ? "" : "warning");

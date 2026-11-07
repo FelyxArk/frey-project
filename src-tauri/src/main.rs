@@ -301,7 +301,7 @@ struct JobItem {
     url: String,
     kind: String,
     folder: String,
-    /// So para links do YouTube.
+    /// So para links baixados pelo yt-dlp.
     #[serde(default)]
     quality: String,
 }
@@ -360,7 +360,7 @@ fn start_job(app: AppHandle, state: State<Shared>, request: StartRequest) -> Res
         return Err("err.nameNeeded".into());
     }
 
-    if request.items.iter().any(|i| i.kind == "youtube") && convert::find_tool("yt-dlp").is_none() {
+    if request.items.iter().any(|i| youtube::handles(&i.kind)) && convert::find_tool("yt-dlp").is_none() {
         return Err(youtube::MISSING.into());
     }
     if !request.convert_to.is_empty() && !convert::is_output_format(&request.convert_to) {
@@ -427,7 +427,7 @@ fn start_download_only(app: AppHandle, state: State<Shared>, request: StartReque
     if request.items.is_empty() {
         return Err("err.noLinks".into());
     }
-    if request.items.iter().any(|i| i.kind == "youtube") && convert::find_tool("yt-dlp").is_none() {
+    if request.items.iter().any(|i| youtube::handles(&i.kind)) && convert::find_tool("yt-dlp").is_none() {
         return Err(youtube::MISSING.into());
     }
     if !request.convert_to.is_empty() && !convert::is_output_format(&request.convert_to) {
@@ -582,9 +582,9 @@ fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<Atomi
             }
         };
         let mut edit_error = None;
-        let result = if item.kind == "youtube" && item.quality == "edit4k" {
+        let result = if youtube::handles(&item.kind) && item.quality == "edit4k" {
             download_for_editing(&app, item.id, &item.url, &target, &cancel, &mut on_progress, &mut edit_error)
-        } else if item.kind == "youtube" {
+        } else if youtube::handles(&item.kind) {
             youtube::download(&item.url, &target, &item.quality, &cancel, &mut on_progress)
         } else {
             client.download_link(&link, &target, &cancel, &mut on_progress)

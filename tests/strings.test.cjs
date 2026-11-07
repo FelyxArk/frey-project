@@ -37,7 +37,7 @@ test("marcadores {0} e tokens {nome} iguais em todo idioma", () => {
 });
 
 test("nenhuma traducao ficou como copia do portugues ou do ingles", () => {
-  const universal = new Set(["kindYoutube", "q1080", "q720", "qNormal", "err.ffmpegFailed", "err.ytFailed", "language", "modeLabel", "modelLabel", "cancel", "cancelling", "tabConvert", "convertBtn", "convertTo", "preparing", "conv.copy", "qAudioFmt", "connecting"]);
+  const universal = new Set(["kindYoutube", "kindX", "kindInstagram", "kindTiktok", "q1080", "q720", "qNormal", "err.ffmpegFailed", "err.ytFailed", "language", "modeLabel", "modelLabel", "cancel", "cancelling", "tabConvert", "convertBtn", "convertTo", "preparing", "conv.copy", "qAudioFmt", "connecting"]);
   for (const lang of ["es", "fr", "ja", "zh", "zht", "ru", "ar"]) {
     const same = keys.filter((k) => !universal.has(k) && strings[lang][k] === strings.en[k]);
     assert.deepStrictEqual(same, [], `${lang} igual ao ingles`);

@@ -1,5 +1,5 @@
-//! Download de links do YouTube pelo yt-dlp instalado no PATH.
-//! O YouTube muda com frequencia; quem acompanha isso e o yt-dlp, nao este app.
+//! Download de YouTube, X, Instagram e TikTok pelo yt-dlp instalado no PATH.
+//! Esses sites mudam com frequencia; quem acompanha isso e o yt-dlp, nao este app.
 //! Nunca sobrescreve (--no-overwrites), retoma parciais e nao usa cookies do usuario.
 
 use crate::convert::find_tool;
@@ -18,6 +18,28 @@ pub const MISSING: &str = "err.ytMissing";
 const PROGRESS_PREFIX: &str = "FREYPROG|";
 const DONE_PREFIX: &str = "FREYDONE|";
 
+/// Tipos de link que este modulo baixa.
+pub fn handles(kind: &str) -> bool {
+    matches!(kind, "youtube" | "x" | "instagram" | "tiktok")
+}
+
+fn is_youtube(url: &str) -> bool {
+    url.contains("youtube.com/") || url.contains("youtu.be/")
+}
+
+/// Nas redes sociais o titulo pode ser um texto longo ou se repetir ("Video by autor").
+/// O ID impede que um post seja pulado por ter o mesmo nome de outro.
+fn name_template(url: &str) -> &'static str {
+    if is_youtube(url) {
+        "%(title)s.%(ext)s"
+    } else {
+        "%(title).80B [%(id)s].%(ext)s"
+    }
+}
+
+/// No TikTok o formato "audio" e so a musica do post, muitas vezes um trecho: o som do video vem do proprio video.
+const AUDIO_FORMAT: &str = "ba[format_id!=audio]/b";
+
 /// Argumentos da qualidade escolhida. H.264/AAC por padrao: e o que entra direto na edicao.
 pub fn quality_args(quality: &str) -> Vec<&'static str> {
     match quality {
@@ -25,11 +47,11 @@ pub fn quality_args(quality: &str) -> Vec<&'static str> {
         "best" => vec!["-S", "res,fps"],
         // Maior resolucao ate 4K, em SDR: o app reencoda depois para H.264 de 8 bits, e HDR ficaria com a cor errada.
         "edit4k" => vec!["-S", "hdr:sdr,res:2160,fps", "--merge-output-format", "mkv"],
-        "audio" => vec!["-f", "ba/b", "-x", "--audio-format", "m4a", "--audio-quality", "0"],
-        "audio-mp3" => vec!["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0"],
-        "audio-wav" => vec!["-f", "ba/b", "-x", "--audio-format", "wav"],
-        "audio-flac" => vec!["-f", "ba/b", "-x", "--audio-format", "flac"],
-        "audio-opus" => vec!["-f", "ba/b", "-x", "--audio-format", "opus", "--audio-quality", "0"],
+        "audio" => vec!["-f", AUDIO_FORMAT, "-x", "--audio-format", "m4a", "--audio-quality", "0"],
+        "audio-mp3" => vec!["-f", AUDIO_FORMAT, "-x", "--audio-format", "mp3", "--audio-quality", "0"],
+        "audio-wav" => vec!["-f", AUDIO_FORMAT, "-x", "--audio-format", "wav"],
+        "audio-flac" => vec!["-f", AUDIO_FORMAT, "-x", "--audio-format", "flac"],
+        "audio-opus" => vec!["-f", AUDIO_FORMAT, "-x", "--audio-format", "opus", "--audio-quality", "0"],
         _ => vec!["-S", "vcodec:h264,res:1080,acodec:aac", "--merge-output-format", "mp4"],
     }
 }
@@ -48,7 +70,7 @@ fn build_args(url: &str, dest: &Path, quality: &str, skip_hls: bool) -> Vec<Stri
     let mut args: Vec<String> = vec!["-P".into(), dest.display().to_string()];
     let fixed = [
         "--ignore-config", "--no-playlist", "--no-overwrites", "--continue", "--newline", "--encoding", "utf-8",
-        "-o", "%(title)s.%(ext)s",
+        "-o", name_template(url),
         "--no-simulate", "--progress",
         "--progress-template",
         "download:FREYPROG|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(info.playlist_index)s|%(info.n_entries)s|%(info.title)s",
@@ -101,7 +123,11 @@ pub fn friendly_error(stderr: &str) -> String {
         .unwrap_or("err.ytFailed")
         .trim();
     let lower = last.to_lowercase();
-    if lower.contains("sign in") || lower.contains("cookies") {
+    if lower.contains("no video could be found") || lower.contains("no video in this") {
+        "err.ytNoVideo".into()
+    } else if lower.contains("ip address is blocked") || lower.contains("not available in your") {
+        "err.ytBlocked".into()
+    } else if lower.contains("sign in") || lower.contains("log in") || lower.contains("login") || lower.contains("cookies") {
         "err.ytLogin".into()
     } else if lower.contains("private video") {
         "err.ytPrivate".into()
@@ -151,7 +177,7 @@ pub fn download(url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, on_p
 }
 
 fn run(tool: &Path, url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
-    match attempt(tool, url, dest, quality, true, cancel, on_progress) {
+    match attempt(tool, url, dest, quality, is_youtube(url), cancel, on_progress) {
         Err(Error::Message(message)) if message == RETRY_WITH_HLS => attempt(tool, url, dest, quality, false, cancel, on_progress),
         other => other,
     }
@@ -280,6 +306,13 @@ mod tests {
     }
 
     #[test]
+    fn audio_nao_usa_a_musica_do_tiktok() {
+        for quality in ["audio", "audio-mp3", "audio-wav", "audio-flac", "audio-opus"] {
+            assert!(quality_args(quality).contains(&"ba[format_id!=audio]/b"), "{quality}");
+        }
+    }
+
+    #[test]
     fn audio_pede_para_manter_e_video_nao() {
         assert!(build_args(URL, Path::new("D:\\p"), "audio-mp3", true).iter().any(|a| a == "--keep-video"));
         assert!(!build_args(URL, Path::new("D:\\p"), "1080", true).iter().any(|a| a == "--keep-video"));
@@ -303,6 +336,30 @@ mod tests {
         let result = run(&tool, URL, &dir.join("s"), "1080", &AtomicBool::new(false), &mut |_| {});
         assert_eq!(result.unwrap_err(), Error::Message("err.ytPrivate".into()));
         assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
+    }
+
+    #[test]
+    fn redes_sociais_usam_id_no_nome_e_nao_pedem_atalho_do_youtube() {
+        let dir = temp_dir("social");
+        let script = "echo %* | findstr /c:\"skip=hls\" >nul && (echo ERROR: usou atalho do YouTube 1>&2 & exit /b 1)\r\necho x> \"%~2\\Post [1].mp4\"\r\necho FREYDONE^|%~2\\Post [1].mp4";
+        let tool = fake(&dir, script);
+        let dest = dir.join("saida");
+        let outcome = run(&tool, "https://www.tiktok.com/@a/video/1", &dest, "1080", &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(outcome.downloaded, 1);
+        for url in ["https://x.com/a/status/1", "https://www.instagram.com/reel/a/", "https://vm.tiktok.com/a/"] {
+            let args = build_args(url, Path::new("D:\\p"), "1080", false);
+            assert!(args.iter().any(|a| a.contains("[%(id)s]")), "{url}");
+            assert_eq!(args.last().unwrap(), url);
+        }
+        assert!(build_args(URL, Path::new("D:\\p"), "1080", true).iter().any(|a| a == "%(title)s.%(ext)s"));
+    }
+
+    #[test]
+    fn tipos_baixados_pelo_ytdlp() {
+        for kind in ["youtube", "x", "instagram", "tiktok"] {
+            assert!(handles(kind), "{kind}");
+        }
+        assert!(!handles("file") && !handles("folder"));
     }
 
     #[test]
@@ -344,6 +401,9 @@ mod tests {
     fn erros_comuns_em_portugues() {
         assert_eq!(friendly_error("WARNING: x\nERROR: [youtube] a: Sign in to confirm you're not a bot"), "err.ytLogin");
         assert_eq!(friendly_error("ERROR: Private video"), "err.ytPrivate");
+        assert_eq!(friendly_error("ERROR: [twitter] 1: No video could be found in this tweet"), "err.ytNoVideo");
+        assert_eq!(friendly_error("ERROR: [TikTok] 1: Your IP address is blocked from accessing this post"), "err.ytBlocked");
+        assert_eq!(friendly_error("ERROR: [Instagram] a: Instagram sent an empty media response. use --cookies-from-browser"), "err.ytLogin");
         assert_eq!(friendly_error("ERROR: [youtube] a: Video unavailable"), "err.ytUnavailable");
         assert_eq!(friendly_error("ERROR: This video is DRM protected"), "err.ytDrm");
         assert_eq!(friendly_error("ERROR: ffmpeg not found"), "err.ffmpegMissing");

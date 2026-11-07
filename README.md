@@ -1,6 +1,6 @@
 # Frey Project
 
-App de Windows que fica na bandeja e abre com um atalho (`Ctrl+Alt+P`): cria a estrutura de pastas do seu projeto de vídeo e baixa os materiais do Google Drive e do YouTube para dentro dela. Tem também um conversor de vídeo.
+App de Windows que fica na bandeja e abre com um atalho (`Ctrl+Alt+P`): cria a estrutura de pastas do seu projeto de vídeo e baixa os materiais do Google Drive, YouTube, X, Instagram e TikTok para dentro dela. Tem também um conversor de vídeo.
 
 ## O que ele faz
 
@@ -9,10 +9,11 @@ App de Windows que fica na bandeja e abre com um atalho (`Ctrl+Alt+P`): cria a e
 - **Modelos de pastas:** crie, duplique e edite os seus.
 - **Google Drive:** arquivos e pastas públicos, com subpastas e retomada de download.
 - **YouTube:** 1080p e 720p em H.264 MP4, 4K para edição (baixa até 4K e converte para H.264 MP4), melhor qualidade ou só áudio (M4A, MP3, WAV, FLAC ou Opus).
+- **X, Instagram e TikTok:** vídeos de posts públicos, sem usar a sua conta. Alguns posts só abrem com login e não podem ser baixados. Links de perfil não são aceitos.
 - **Conversor:** MP4, MOV, MKV, WEBM, GIF, MP3, WAV, M4A, FLAC e Opus, com GPU quando disponível.
 - **Idiomas:** português, inglês, espanhol, francês, japonês, chinês simplificado, chinês tradicional, russo e árabe.
 
-Copiou um link do Drive ou do YouTube? Ao abrir o painel, ele já está na lista, pronto para baixar. O app não lê o conteúdo copiado em segundo plano, e dá para desligar isso em Configurações.
+Copiou um link de um desses sites? Ao abrir o painel, ele já está na lista, pronto para baixar. O app não lê o conteúdo copiado em segundo plano, e dá para desligar isso em Configurações.
 
 Nada é apagado nem sobrescrito: arquivos que já existem são pulados e avisados.
 
@@ -28,12 +29,12 @@ Requer Windows 10 ou 11 de 64 bits.
 
 ## Uso responsável
 
-Baixe apenas material seu ou que você tenha permissão para baixar. Os termos do YouTube restringem downloads sem autorização, e os direitos autorais de cada vídeo continuam valendo. O app não usa a sua conta nem baixa vídeos protegidos por DRM.
+Baixe apenas material seu ou que você tenha permissão para baixar. Os termos do YouTube, do X, do Instagram e do TikTok restringem downloads sem autorização, e os direitos autorais de cada vídeo continuam valendo. O app não usa a sua conta nem baixa vídeos protegidos por DRM.
 
 ## Problemas conhecidos
 
 - O **Sair** da bandeja remove o ícone, mas o processo pode continuar rodando até reiniciar o PC.
-- O `yt-dlp` incluído não se atualiza sozinho. Se os downloads do YouTube pararem, instale a versão mais nova do Frey Project.
+- O `yt-dlp` incluído não se atualiza sozinho. Se os downloads de vídeo pararem, instale a versão mais nova do Frey Project.
 - As traduções ainda não tiveram revisão de falantes nativos.
 
 ## Desenvolvimento
@@ -75,7 +76,7 @@ O Frey Project só existe graças a estes projetos:
 | Projeto | Para quê | Licença |
 |---|---|---|
 | [FFmpeg](https://github.com/FFmpeg/FFmpeg) | Conversão e junção de áudio e vídeo | GPL v3 nesta compilação |
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Downloads do YouTube | The Unlicense |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Downloads de YouTube, X, Instagram e TikTok | The Unlicense |
 | [Deno](https://github.com/denoland/deno) | Runtime de JavaScript usado pelo yt-dlp | MIT |
 | [Microsoft Edge WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) | Interface do app, instalado só se faltar | Termos da Microsoft |
 

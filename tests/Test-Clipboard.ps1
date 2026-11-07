@@ -1,4 +1,4 @@
-﻿# Testa o link copiado no app real, com uma instancia de teste separada: pode rodar com o app instalado aberto.
+# Testa o link copiado no app real, com uma instancia de teste separada: pode rodar com o app instalado aberto.
 # Usa o depurador do WebView, sem mouse nem teclado. Troca a area de transferencia durante o teste e restaura o texto no fim.
 # Uso: powershell -NoProfile -STA -ExecutionPolicy Bypass -File Test-Clipboard.ps1 -OutDir pasta
 param([Parameter(Mandatory)][string]$OutDir, [string]$Exe)
@@ -109,6 +109,18 @@ try {
     OpenPanel
     Check 'concluido sai e o novo fica' ((Rows) -eq 1 -and (FirstUrl) -eq $ytLink)
     [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())')
+  }
+
+  # Redes sociais entram com o proprio rotulo; perfil nao entra
+  [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
+  CopyText 'https://www.tiktok.com/@autor'
+  OpenPanel
+  Check 'link de perfil nao entra' ((Rows) -eq 0)
+  foreach ($site in @(@('https://x.com/autor/status/1234567890', 'X'), @('https://www.instagram.com/reel/AbCdEf123/', 'Instagram'), @('https://www.tiktok.com/@autor/video/1234567890', 'TikTok'))) {
+    CopyText $site[0]
+    OpenPanel
+    Check "$($site[1]) entra pronto, sem 4K" ((FirstUrl) -eq $site[0] -and (Eval 'document.querySelector("#rows .row__kind").textContent') -eq $site[1] -and (Eval 'document.querySelector("#rows select.row__quality option[value=edit4k]")===null') -eq $true)
+    [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
   }
 
   # Desligar a opcao

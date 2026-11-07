@@ -38,9 +38,29 @@ pub struct Link {
     pub kind: &'static str,
 }
 
-/// Extrai os links do Drive de um texto colado, sem repetir e ignorando outros sites.
+/// Site baixado pelo yt-dlp, pelo dominio do link.
+fn video_site(url: &str) -> Option<&'static str> {
+    let host = url.split("://").nth(1)?.split('/').next()?;
+    match host.trim_start_matches("www.").trim_start_matches("mobile.").trim_start_matches("m.") {
+        "youtube.com" | "music.youtube.com" | "youtu.be" => Some("youtube"),
+        "x.com" | "twitter.com" => Some("x"),
+        "instagram.com" => Some("instagram"),
+        "tiktok.com" | "vm.tiktok.com" | "vt.tiktok.com" => Some("tiktok"),
+        _ => None,
+    }
+}
+
+/// Extrai os links de um texto colado, sem repetir e ignorando outros sites.
 pub fn parse_links(text: &str) -> Vec<Link> {
-    let url = Regex::new(r#"https?://(?:(?:drive|docs)\.google\.com|(?:www\.|m\.|music\.)?youtube\.com|youtu\.be)/[^\s"'<>]+"#).unwrap();
+    // Nas redes sociais so links de post: um link de perfil baixaria a pagina inteira.
+    let url = Regex::new(concat!(
+        r#"https?://(?:(?:drive|docs)\.google\.com|(?:www\.|m\.|music\.)?youtube\.com|youtu\.be)/[^\s"'<>]+"#,
+        r#"|https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/(?:i/web|[^\s"'<>/]+)/status/\d+[^\s"'<>]*"#,
+        r#"|https?://(?:www\.)?instagram\.com/(?:[A-Za-z0-9_.]+/)?(?:p|reel|reels|tv)/[A-Za-z0-9_-]+[^\s"'<>]*"#,
+        r#"|https?://(?:www\.|m\.)?tiktok\.com/@[^\s"'<>/]+/video/\d+[^\s"'<>]*"#,
+        r#"|https?://(?:(?:vm|vt)\.tiktok\.com/|(?:www\.)?tiktok\.com/t/)[A-Za-z0-9]+[^\s"'<>]*"#,
+    ))
+    .unwrap();
     let bare = Regex::new(r"^[a-zA-Z0-9_-]{25,}$").unwrap();
     let mut found: Vec<String> = url.find_iter(text).map(|m| m.as_str().to_string()).collect();
     found.extend(text.lines().map(str::trim).filter(|l| bare.is_match(l)).map(String::from));
@@ -49,8 +69,8 @@ pub fn parse_links(text: &str) -> Vec<Link> {
         .into_iter()
         .filter(|l| seen.insert(l.clone()))
         .map(|url| {
-            let kind = if url.contains("youtube.com/") || url.contains("youtu.be/") {
-                "youtube"
+            let kind = if let Some(site) = video_site(&url) {
+                site
             } else if url.contains("/folders/") {
                 "folder"
             } else {
@@ -580,6 +600,26 @@ mod tests {
             ("https://music.youtube.com/watch?v=m", "youtube"),
             ("https://www.youtube.com/shorts/s", "youtube"),
         ]);
+    }
+
+    #[test]
+    fn reconhece_posts_de_x_instagram_e_tiktok() {
+        let text = "https://x.com/nasa/status/123?s=20 https://twitter.com/nasa/status/124\nhttps://mobile.twitter.com/nasa/status/125 https://x.com/i/web/status/126\n\
+                    https://www.instagram.com/reel/AbC_-1/?igsh=x https://instagram.com/p/DeF2/ https://www.instagram.com/autor/reel/GhI3/\n\
+                    https://www.tiktok.com/@autor.x/video/789?lang=pt https://vm.tiktok.com/ZMabc/ https://vt.tiktok.com/ZSdef/ https://www.tiktok.com/t/ZTghi/";
+        let kinds: Vec<_> = parse_links(text).iter().map(|l| l.kind).collect();
+        assert_eq!(kinds, ["x", "x", "x", "x", "instagram", "instagram", "instagram", "tiktok", "tiktok", "tiktok", "tiktok"]);
+    }
+
+    #[test]
+    fn ignora_perfis_e_sites_parecidos() {
+        for text in [
+            "https://x.com/nasa", "https://x.com/nasa/media", "https://www.instagram.com/autor/", "https://www.instagram.com/reels/",
+            "https://www.tiktok.com/@autor", "https://evil-x.com/a/status/1", "https://notx.com/a/status/1", "https://instagram.com.evil.io/p/abc/",
+            "https://mytiktok.com/@a/video/1", "https://x.com.evil.io/a/status/1",
+        ] {
+            assert!(parse_links(text).is_empty(), "{text}");
+        }
     }
 
     #[test]
