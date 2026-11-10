@@ -7,7 +7,7 @@ App de Windows que fica na bandeja e abre com um atalho (`Ctrl+Alt+P`): cria a e
 - **Criar pastas e baixar:** escolha um modelo, dê um nome e cole os links. Cada link cai na pasta marcada do modelo, ou na que você escolher.
 - **Só baixar:** baixa direto para uma pasta, sem criar estrutura.
 - **Modelos de pastas:** crie, duplique e edite os seus.
-- **Google Drive:** arquivos e pastas públicos, com subpastas e retomada de download.
+- **Google Drive:** arquivos e pastas públicos, com subpastas e retomada de download. Documentos, planilhas e apresentações do Google saem como Word, Excel e PowerPoint.
 - **YouTube:** 1080p e 720p em H.264 MP4, 4K para edição (baixa até 4K e converte para H.264 MP4), melhor qualidade ou só áudio (M4A, MP3, WAV, FLAC ou Opus).
 - **X, Instagram e TikTok:** vídeos de posts públicos, sem usar a sua conta. Alguns posts só abrem com login e não podem ser baixados. Links de perfil não são aceitos.
 - **Conversor:** MP4, MOV, MKV, WEBM, GIF, MP3, WAV, M4A, FLAC e Opus, com GPU quando disponível.

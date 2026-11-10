@@ -225,6 +225,14 @@ fn header_text(response: &Response, name: &str) -> Option<String> {
     response.headers().get(name).map(|value| decode_header(value.as_bytes()))
 }
 
+/// "Video.mp4" vira "Video (2).mp4".
+fn numbered(name: &str, number: usize) -> String {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem} ({number}).{ext}"),
+        _ => format!("{name} ({number})"),
+    }
+}
+
 pub struct Client {
     agent: ureq::Agent,
     stall_limit: Duration,
@@ -270,6 +278,27 @@ impl Client {
 
     /// Segue as paginas do Drive ate a resposta que traz o arquivo. Devolve tambem o nome visto na confirmacao.
     fn resolve_file(&self, id: &str) -> Result<(Response, String, Option<String>), Error> {
+        match self.resolve_drive_file(id) {
+            Err(Error::Message(m)) if m == NO_ACCESS => self.export_google_file(id).ok_or(Error::Message(m)),
+            other => other,
+        }
+    }
+
+    /// Documentos, planilhas e apresentacoes do Google nao saem pelo download comum (o Drive responde 404):
+    /// saem pela exportacao, em Word, Excel ou PowerPoint.
+    fn export_google_file(&self, id: &str) -> Option<(Response, String, Option<String>)> {
+        for (kind, format) in [("document", "docx"), ("spreadsheets", "xlsx"), ("presentation", "pptx")] {
+            let url = format!("{}/{kind}/d/{id}/export?format={format}", self.docs_host);
+            let Ok(response) = self.get(&url, 0) else { continue };
+            let is_html = header_text(&response, "content-type").is_some_and(|t| t.starts_with("text/html"));
+            if response.status().as_u16() < 400 && !is_html && response.headers().contains_key("content-disposition") {
+                return Some((response, url, None));
+            }
+        }
+        None
+    }
+
+    fn resolve_drive_file(&self, id: &str) -> Result<(Response, String, Option<String>), Error> {
         let mut url = format!("{}/uc?id={id}", self.host);
         // Caminho rapido: o servidor de download, sem redirecionamento nem pagina de confirmacao.
         // Documentos do Google e erros nao passam por aqui: seguem o caminho completo abaixo.
@@ -312,17 +341,27 @@ impl Client {
         id: &str,
         listed_name: Option<&str>,
         dest: &Path,
+        taken: &mut HashSet<std::path::PathBuf>,
         cancel: &AtomicBool,
         on_bytes: &mut dyn FnMut(&str, u64, Option<u64>),
     ) -> Result<Option<std::path::PathBuf>, Error> {
         let (first, url, page_name) = self.resolve_file(id)?;
-        let name = header_text(&first, "content-disposition")
+        let original = header_text(&first, "content-disposition")
             .and_then(|h| filename_from_disposition(&h))
             .or(page_name)
             .or_else(|| listed_name.map(clean_segment).filter(|n| !n.is_empty()))
             .unwrap_or_else(|| id.to_string());
         fs::create_dir_all(dest)?;
+        // Dois arquivos diferentes com o mesmo nome na mesma pasta: o segundo ganha " (2)" em vez de ser pulado.
+        // A ordem da listagem e sempre a mesma, entao tentar de novo reencontra cada um no seu nome.
+        let mut name = original.clone();
+        let mut number = 2;
+        while taken.contains(&dest.join(&name)) {
+            name = numbered(&original, number);
+            number += 1;
+        }
         let final_path = dest.join(&name);
+        taken.insert(final_path.clone());
         if final_path.exists() {
             return Ok(None);
         }
@@ -438,11 +477,12 @@ impl Client {
         let files_total = files.len();
         let mut outcome = Outcome { downloaded: 0, skipped: 0, files: Vec::new() };
         let mut failed: Vec<String> = Vec::new();
+        let mut taken = HashSet::new();
         for (index, (file_id, listed_name, rel)) in files.iter().enumerate() {
             let mut on_bytes = |file: &str, done: u64, total: Option<u64>| {
                 on_progress(Progress { file: file.to_string(), done, total, files_done: index, files_total });
             };
-            match self.download_file(file_id, listed_name.as_deref(), &dest.join(rel), cancel, &mut on_bytes) {
+            match self.download_file(file_id, listed_name.as_deref(), &dest.join(rel), &mut taken, cancel, &mut on_bytes) {
                 Ok(Some(path)) => {
                     outcome.downloaded += 1;
                     outcome.files.push(path);
@@ -905,5 +945,68 @@ mod tests {
         let dest = temp_dir("doc");
         run(&Client::with_hosts(&host, &host), &format!("https://docs.google.com/document/d/{id}/edit"), "file", &dest).unwrap();
         assert_eq!(fs::read(dest.join("Doc.docx")).unwrap(), b"docx");
+    }
+
+    #[test]
+    fn documento_que_o_drive_recusa_sai_pela_exportacao() {
+        // Hoje o Drive responde 404 a documentos do Google, no download direto e no /uc.
+        let (host, ..) = serve(HashMap::from([
+            (format!("/presentation/d/{ID_B}/export?format=pptx"), file_route("Slides.pptx", b"pptx")),
+        ]));
+        let dest = temp_dir("export");
+        let outcome = run(&Client::with_hosts(&host, &host), &file_url(ID_B), "file", &dest).unwrap();
+        assert_eq!(outcome.downloaded, 1);
+        assert_eq!(fs::read(dest.join("Slides.pptx")).unwrap(), b"pptx");
+    }
+
+    #[test]
+    fn nomes_iguais_na_mesma_pasta_nao_se_perdem() {
+        let view = format!("<html><title>P</title><a href=\"https://docs.google.com/document/d/{ID_A}/edit\">Tarefa</a><a href=\"https://docs.google.com/document/d/{ID_B}/edit\">Tarefa</a><a href=\"https://drive.google.com/drive/folders/{ID_SUB}\">Sub</a></html>");
+        let sub = format!("<html><title>S</title><a href=\"https://docs.google.com/document/d/{ID_A}/edit\">Tarefa</a></html>");
+        let (host, ..) = serve(HashMap::from([
+            (format!("/embeddedfolderview?id=ROOTROOTROOTROOTROOTROOTROOT"), html_route(&view)),
+            (format!("/embeddedfolderview?id={ID_SUB}"), html_route(&sub)),
+            (format!("/document/d/{ID_A}/export?format=docx"), file_route("Tarefa.docx", b"primeiro")),
+            (format!("/document/d/{ID_B}/export?format=docx"), file_route("Tarefa.docx", b"segundo")),
+        ]));
+        let dest = temp_dir("same-name");
+        let client = Client::with_hosts(&host, &host);
+        let folder = "https://drive.google.com/drive/folders/ROOTROOTROOTROOTROOTROOTROOT";
+        let first = run(&client, folder, "folder", &dest).unwrap();
+        assert_eq!((first.downloaded, first.skipped), (3, 0));
+        assert_eq!(fs::read(dest.join("Tarefa.docx")).unwrap(), b"primeiro");
+        assert_eq!(fs::read(dest.join("Tarefa (2).docx")).unwrap(), b"segundo");
+        assert!(dest.join("Sub").join("Tarefa.docx").exists(), "outra pasta nao conta como nome repetido");
+        let again = run(&client, folder, "folder", &dest).unwrap();
+        assert_eq!((again.downloaded, again.skipped), (0, 3), "tentar de novo nao duplica");
+    }
+
+    /// Rede de verdade: cargo test -- --ignored, com FREY_TEST_DRIVE_FOLDER apontando para uma pasta publica.
+    /// Baixa so os documentos do Google da pasta, nao os outros arquivos.
+    #[test]
+    #[ignore]
+    fn pasta_real_exporta_os_documentos() {
+        let Ok(url) = std::env::var("FREY_TEST_DRIVE_FOLDER") else { return };
+        let client = Client::new();
+        let mut files = Vec::new();
+        client.list_folder(&extract_id(&url).unwrap(), Path::new(""), &mut HashSet::new(), &mut files).unwrap();
+        let dest = temp_dir("real-docs");
+        let (mut taken, mut saved) = (HashSet::new(), Vec::new());
+        for (id, name, rel) in files.iter().filter(|(id, ..)| client.get(&format!("{}/uc?id={id}", client.host), 0).is_ok_and(|r| r.status().as_u16() == 404)) {
+            let path = client.download_file(id, name.as_deref(), &dest.join(rel), &mut taken, &AtomicBool::new(false), &mut |_, _, _| {}).unwrap();
+            saved.push(path.expect("arquivo novo"));
+        }
+        println!("documentos exportados: {saved:?}");
+        assert!(!saved.is_empty(), "a pasta nao tem documentos do Google");
+        for path in &saved {
+            assert!(fs::read(path).unwrap().starts_with(b"PK"), "{path:?} nao e um arquivo do Office");
+        }
+    }
+
+    #[test]
+    fn numera_antes_da_extensao() {
+        assert_eq!(numbered("Video.final.mp4", 2), "Video.final (2).mp4");
+        assert_eq!(numbered("LEIAME", 3), "LEIAME (3)");
+        assert_eq!(numbered(".env", 2), ".env (2)");
     }
 }
