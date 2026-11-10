@@ -2,14 +2,12 @@
 //! Nunca sobrescreve e nunca toca no original: a saida sempre tem um nome livre.
 
 use std::io::{BufRead, BufReader, Read};
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-const NO_WINDOW: u32 = 0x0800_0000;
 pub const FFMPEG_MISSING: &str = "err.ffmpegMissing";
 const VIDEO_CONTAINERS: [&str; 3] = ["mp4", "mov", "mkv"];
 const OUTPUT_FORMATS: [&str; 10] = ["mp4", "mov", "mkv", "webm", "gif", "mp3", "wav", "m4a", "flac", "opus"];
@@ -52,10 +50,9 @@ pub fn extension(path: &Path) -> Option<String> {
     path.extension().map(|e| e.to_string_lossy().to_lowercase())
 }
 
-/// Procura no PATH do Windows.
+/// Procura no PATH.
 pub fn find_tool(name: &str) -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths).map(|dir| dir.join(format!("{name}.exe"))).find(|p| p.is_file())
+    crate::platform::find_in_path(name)
 }
 
 /// Nome livre para a saida; o original e qualquer arquivo existente ficam intactos.
@@ -88,6 +85,8 @@ pub fn build_args(ext: &str, copy: Copy, crf: u32, gpu: Option<&str>) -> Vec<Str
     }
     let mut args = strs(&["-map", "0:v:0", "-map", "0:a?"]);
     let crf_text = crf.to_string();
+    // VideoToolbox (Mac) mede qualidade de 1 a 100, ao contrario do CRF: 18 vira 64, 23 vira 54.
+    let apple_quality = (100u32.saturating_sub(crf * 2)).clamp(30, 90).to_string();
     match copy {
         Copy::All => args.extend(strs(&["-c", "copy"])),
         Copy::Video => args.extend(strs(&["-c:v", "copy", "-c:a", "aac", "-b:a", "192k"])),
@@ -96,6 +95,7 @@ pub fn build_args(ext: &str, copy: Copy, crf: u32, gpu: Option<&str>) -> Vec<Str
                 Some("h264_nvenc") => vec!["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", &crf_text, "-b:v", "0"],
                 Some("h264_amf") => vec!["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", &crf_text, "-qp_p", &crf_text],
                 Some("h264_qsv") => vec!["-c:v", "h264_qsv", "-global_quality", &crf_text],
+                Some("h264_videotoolbox") => vec!["-c:v", "h264_videotoolbox", "-q:v", &apple_quality],
                 _ => vec!["-c:v", "libx264", "-preset", "medium", "-crf", &crf_text],
             };
             args.extend(strs(&encoder));
@@ -123,7 +123,7 @@ pub fn attempts(ext: &str, mode: &str) -> Vec<Copy> {
 
 fn quiet_command(path: &Path) -> Command {
     let mut command = Command::new(path);
-    command.creation_flags(NO_WINDOW).stdin(Stdio::null());
+    crate::platform::quiet(&mut command);
     command
 }
 
@@ -145,9 +145,15 @@ pub fn needs_h264(path: &Path, ext: &str) -> bool {
     matches!(ext, "mp4" | "mov") && video_codec(path).is_some_and(|codec| codec != "h264")
 }
 
+/// Encoders H.264 de GPU de cada sistema, na ordem de tentativa.
+#[cfg(windows)]
+const GPU_ENCODERS: [&str; 3] = ["h264_nvenc", "h264_amf", "h264_qsv"];
+#[cfg(not(windows))]
+const GPU_ENCODERS: [&str; 1] = ["h264_videotoolbox"];
+
 /// Primeiro encoder H.264 de GPU que realmente funciona nesta maquina.
 pub fn detect_gpu(ffmpeg: &Path) -> Option<String> {
-    ["h264_nvenc", "h264_amf", "h264_qsv"].iter().find_map(|encoder| {
+    GPU_ENCODERS.iter().find_map(|encoder| {
         let status = quiet_command(ffmpeg)
             .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=s=256x256:d=0.2", "-c:v", encoder, "-f", "null", "-"])
             .stdout(Stdio::null())
@@ -336,6 +342,7 @@ mod tests {
         assert_eq!(mp4[mp4.len() - 2..], ["-movflags", "+faststart"]);
         assert!(build_args("mp4", Copy::None, 22, Some("h264_nvenc")).windows(2).any(|w| w == ["-cq", "22"]));
         assert!(build_args("webm", Copy::None, 22, None).windows(2).any(|w| w == ["-crf", "32"]));
+        assert!(build_args("mp4", Copy::None, 18, Some("h264_videotoolbox")).windows(2).any(|w| w == ["-q:v", "64"]));
     }
 
     #[test]

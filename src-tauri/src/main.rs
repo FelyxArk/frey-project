@@ -8,6 +8,7 @@ mod drive;
 mod i18n;
 mod models;
 mod outside_click;
+mod platform;
 mod youtube;
 
 use serde::{Deserialize, Serialize};
@@ -23,10 +24,14 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+#[cfg(not(target_os = "macos"))]
 const DEFAULT_HOTKEY: &str = "ctrl+alt+p";
+#[cfg(target_os = "macos")]
+const DEFAULT_HOTKEY: &str = "cmd+alt+p";
 const PANEL_WIDTH: f64 = 640.0;
 const TRAY_ID: &str = "main";
 const HIDDEN_ARG: &str = "--hidden";
+#[cfg(windows)]
 const JUST_OPENED: std::time::Duration = std::time::Duration::from_millis(1500);
 
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -92,6 +97,7 @@ fn save_settings(app: &AppHandle, settings: &Settings) {
     }
 }
 
+#[cfg(windows)]
 /// Ponto na borda direita do monitor mais a direita: nenhuma tela mostra a janela a partir dali.
 /// O Windows so aceita criar a janela com a origem dentro de um monitor, por isso nao vai mais longe.
 fn beyond_the_screens(app: &AppHandle) -> Option<(f64, f64)> {
@@ -126,6 +132,7 @@ fn show_panel(app: &AppHandle) {
     *state.panel_shown_at.lock().unwrap() = Some(Instant::now());
     let _ = window.show();
     let _ = window.set_focus();
+    #[cfg(windows)]
     take_foreground(window.hwnd().ok().map(|h| h.0 as *mut std::ffi::c_void));
     let _ = window.emit("panel-shown", ());
 }
@@ -141,6 +148,7 @@ fn toggle_panel(app: &AppHandle) {
 
 /// Abre a pasta no Explorer; se ela ja estiver aberta, traz essa janela em vez de abrir outra.
 /// Roda em outra thread porque perguntar ao Windows leva alguns décimos de segundo.
+#[cfg(windows)]
 fn open_folder(path: &Path) {
     let path = path.to_path_buf();
     std::thread::spawn(move || match find_open_folder(&path) {
@@ -151,9 +159,17 @@ fn open_folder(path: &Path) {
     });
 }
 
+/// No Mac o Finder ja traz a janela aberta na pasta em vez de abrir outra.
+#[cfg(not(windows))]
+fn open_folder(path: &Path) {
+    let _ = std::process::Command::new("open").arg(path).spawn();
+}
+
+#[cfg(windows)]
 const FIND_FOLDER_SCRIPT: &str = "$want=[IO.Path]::GetFullPath($env:FREY_OPEN_PATH).TrimEnd('\\');foreach($w in (New-Object -ComObject Shell.Application).Windows()){try{$p=$w.Document.Folder.Self.Path;if($p -and $p.TrimEnd('\\') -ieq $want){[int64]$w.HWND;break}}catch{}}";
 
 /// Janela do Explorer ja aberta nesta pasta. Na duvida devolve None, e abre uma janela nova como antes.
+#[cfg(windows)]
 fn find_open_folder(path: &Path) -> Option<isize> {
     use std::os::windows::process::CommandExt;
     let mut child = std::process::Command::new("powershell.exe")
@@ -182,6 +198,7 @@ fn find_open_folder(path: &Path) -> Option<isize> {
     text.trim().parse::<isize>().ok().filter(|window| *window != 0)
 }
 
+#[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
     fn IsIconic(window: *mut std::ffi::c_void) -> i32;
@@ -189,6 +206,7 @@ extern "system" {
     fn SetForegroundWindow(window: *mut std::ffi::c_void) -> i32;
 }
 
+#[cfg(windows)]
 fn bring_to_front(window: isize) {
     const SW_RESTORE: i32 = 9;
     let window = window as *mut std::ffi::c_void;
@@ -217,6 +235,8 @@ struct Boot {
     visible: bool,
     download_only: bool,
     detect_link: bool,
+    /// "windows" ou "macos": o painel mostra os atalhos do sistema.
+    platform: &'static str,
 }
 
 #[tauri::command]
@@ -239,7 +259,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| names[0].clone());
             let dest = if Path::new(&settings.destino).is_dir() { settings.destino } else { String::new() };
-            Boot { models: names, default_name: cfg.default_name, model, dest, hotkey, hotkey_error, config_error: None, running, language, visible, download_only, detect_link }
+            Boot { models: names, default_name: cfg.default_name, model, dest, hotkey, hotkey_error, config_error: None, running, language, visible, download_only, detect_link, platform: std::env::consts::OS }
         }
         Err(e) => Boot {
             models: Vec::new(),
@@ -249,6 +269,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
             hotkey,
             hotkey_error,
             config_error: Some(e),
+            platform: std::env::consts::OS,
             running,
             language,
             visible,
@@ -564,7 +585,7 @@ fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<Atomi
             continue;
         }
         let _ = app.emit("job", JobEvent::Start { id: item.id });
-        let target = if item.folder.is_empty() { base.clone() } else { base.join(&item.folder) };
+        let target = if item.folder.is_empty() { base.clone() } else { base.join(models::rel_path(&item.folder)) };
         let link = drive::Link { url: item.url.clone(), kind: if item.kind == "folder" { "folder" } else { "file" } };
         let mut last_emit = Instant::now();
         let mut on_progress = |progress: drive::Progress| {
@@ -921,6 +942,7 @@ fn resize_panel(app: AppHandle, height: f64) {
 
 // ---------------------------------------------------------------- inicio
 
+#[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
     fn GetForegroundWindow() -> *mut std::ffi::c_void;
@@ -928,6 +950,7 @@ extern "system" {
     fn AttachThreadInput(attach: u32, attach_to: u32, enable: i32) -> i32;
 }
 
+#[cfg(windows)]
 /// O Windows nega o foco a um app em segundo plano, como quando o atalho da Area de Trabalho
 /// chama a copia que ja esta na bandeja. Quem pediu o painel foi o usuario: une-se a fila de
 /// entrada da janela em primeiro plano so durante o pedido.
@@ -949,6 +972,7 @@ fn take_foreground(own: Option<*mut std::ffi::c_void>) {
 }
 
 /// Durante uma troca o Windows pode nao ter janela em primeiro plano: aguarda definir antes de decidir.
+#[cfg(windows)]
 fn focus_really_left(window: &tauri::Window) -> bool {
     let Ok(own) = window.hwnd() else { return false };
     for _ in 0..10 {
@@ -964,12 +988,14 @@ fn focus_really_left(window: &tauri::Window) -> bool {
     false
 }
 
+#[cfg(windows)]
 #[link(name = "dwmapi")]
 extern "system" {
     fn DwmSetWindowAttribute(hwnd: *mut std::ffi::c_void, attribute: u32, value: *const std::ffi::c_void, size: u32) -> i32;
 }
 
 /// Tira a borda na cor de destaque que o Windows 11 desenha em volta da janela: destoa do vidro.
+#[cfg(windows)]
 fn remove_accent_border(window: &WebviewWindow) {
     const DWMWA_BORDER_COLOR: u32 = 34;
     const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
@@ -998,10 +1024,12 @@ fn register_hotkey(app: &AppHandle, text: &str) -> Result<(), String> {
         .map_err(|_| i18n::code("err.hotkeyBusy", &[text]))
 }
 
-/// Coloca as ferramentas instaladas junto com o app (pasta bin) na frente do PATH.
+/// Coloca as ferramentas instaladas junto com o app na frente do PATH: a pasta bin no Windows,
+/// e no Mac a pasta do proprio executavel, onde o pacote .app guarda ffmpeg, yt-dlp e Deno.
 /// O yt-dlp tambem acha assim o ffmpeg e o Deno, e a copia embutida vence a do sistema.
 fn use_bundled_tools() {
-    let Some(bin) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("bin"))) else { return };
+    let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) else { return };
+    let bin = if cfg!(target_os = "macos") { dir } else { dir.join("bin") };
     if !bin.is_dir() {
         return;
     }
@@ -1024,6 +1052,10 @@ fn main() {
                 show_panel(app);
             }
         }));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![HIDDEN_ARG])));
     }
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1051,6 +1083,7 @@ fn main() {
             }
             // Perder o foco nao esconde: o painel fica aberto para receber arquivos do Explorer.
             // Logo depois de abrir, quem iniciou o programa pode recuperar o foco por um instante.
+            #[cfg(windows)]
             WindowEvent::Focused(false) => {
                 let window = window.clone();
                 std::thread::spawn(move || {
@@ -1067,22 +1100,36 @@ fn main() {
             // Nascer escondida faz o painel recusar arquivos arrastados do Explorer.
             // Por isso a janela nasce visivel, sem foco e alem da borda da tela, e so entao se esconde.
             let config = handle.config().app.windows.iter().find(|w| w.label == "panel").cloned().expect("janela do painel na configuracao");
+            #[allow(unused_mut)]
             let mut builder = WebviewWindowBuilder::from_config(&handle, &config)?;
+            #[cfg(windows)]
             if let Some((x, y)) = beyond_the_screens(&handle) {
                 builder = builder.position(x, y);
             }
             let window = builder.build()?;
             let _ = window.hide();
+            #[cfg(windows)]
             remove_accent_border(&window);
+            let (busy, closing) = (handle.clone(), window.clone());
+            let busy = move || busy.state::<Shared>().dialog_open.load(Ordering::SeqCst);
+            let close = move || {
+                let _ = closing.hide();
+            };
+            #[cfg(windows)]
             if let Ok(hwnd) = window.hwnd() {
-                let (busy, closing) = (handle.clone(), window.clone());
-                outside_click::watch(
-                    hwnd.0 as isize,
-                    move || busy.state::<Shared>().dialog_open.load(Ordering::SeqCst),
-                    move || {
-                        let _ = closing.hide();
-                    },
-                );
+                outside_click::watch(hwnd.0 as isize, busy, close);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                outside_click::watch(window.clone(), busy, close);
+                // Como na bandeja do Windows: so o icone na barra de menus, sem icone no Dock.
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                // Iniciar com o Mac. O instalador do Windows ja grava isso no registro.
+                use tauri_plugin_autostart::ManagerExt;
+                let launcher = handle.autolaunch();
+                if !launcher.is_enabled().unwrap_or(true) {
+                    let _ = launcher.enable();
+                }
             }
             let settings: Settings = settings_path(&handle)
                 .and_then(|p| std::fs::read_to_string(p).ok())
@@ -1120,6 +1167,14 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("erro ao iniciar o Frey Project");
+        .build(tauri::generate_context!())
+        .expect("erro ao iniciar o Frey Project")
+        .run(|_app, _event| {
+            // No Mac, abrir o app de novo pelo Finder ou pelo Launchpad nao inicia outra copia:
+            // o sistema avisa a que ja esta rodando, e ela mostra o painel.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                show_panel(_app);
+            }
+        });
 }

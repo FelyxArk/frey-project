@@ -33,6 +33,7 @@
   function t(key) {
     var text = STRINGS[s.lang][key];
     if (text == null) return "[[" + key + "]]";
+    if (s.mac) text = text.replace(/Ctrl\+/g, "⌘");
     var args = arguments;
     return text.replace(/\{(\d)\}/g, function (all, n) { return args[Number(n) + 1] != null ? tr(String(args[Number(n) + 1])) : all; });
   }
@@ -266,7 +267,7 @@
   function folderOptions(select, value) {
     while (select.firstChild) select.removeChild(select.firstChild);
     addOption(select, "", t("projectRoot"));
-    s.folders.forEach(function (folder) { addOption(select, folder, folder); });
+    s.folders.forEach(function (folder) { addOption(select, folder, shownPath(folder)); });
     select.value = value;
   }
 
@@ -312,10 +313,13 @@
     fit();
   }
 
+  // Os modelos guardam subpastas com "\"; no Mac o painel mostra "/".
+  function shownPath(rel) { return s.mac ? String(rel).replace(/\\/g, "/") : rel; }
+
   function fillTree(target, root, folders) {
     while (target.firstChild) target.removeChild(target.firstChild);
     var b = document.createElement("b");
-    b.textContent = (root || t("chosenFolder")) + "\\  ";
+    b.textContent = shownPath((root || t("chosenFolder")) + "\\") + "  ";
     target.appendChild(b);
     var tops = folders.filter(function (f) { return f.indexOf("\\") < 0; });
     target.appendChild(document.createTextNode(tops.join("  ·  ")));
@@ -475,7 +479,7 @@
       files.forEach(function (path) {
         if (s.files.some(function (f) { return f.path === path; })) return;
         var file = { id: s.nextId++, path: path, state: "pending", msg: [path], node: null };
-        file.node = makeRow(ui.cRows, "kindFile", path.split("\\").pop(), [], function () {
+        file.node = makeRow(ui.cRows, "kindFile", path.split(/[\\/]/).pop(), [], function () {
           s.files = s.files.filter(function (f) { return f !== file; });
         });
         s.files.push(file);
@@ -509,7 +513,7 @@
         if (file) {
           file.msg = [ev.how, Math.floor(ev.percent) + "%"];
           paintRow(file);
-          ui.status.textContent = file.path.split("\\").pop() + " · " + file.msg.map(tr).join(" · ");
+          ui.status.textContent = file.path.split(/[\\/]/).pop() + " · " + file.msg.map(tr).join(" · ");
         }
         break;
       case "ok":
@@ -919,8 +923,17 @@
 
   LANGUAGES.forEach(function (l) { addOption(ui.sLanguage, l[0], l[1]); });
 
+  // "cmd+alt+p" vira "⌘⌥P" no Mac e "Ctrl+Alt+P" no Windows.
+  function hotkeyText(hotkey) {
+    var mac = { CMD: "⌘", COMMAND: "⌘", SUPER: "⌘", ALT: "⌥", OPTION: "⌥", CTRL: "⌃", CONTROL: "⌃", SHIFT: "⇧" };
+    var win = { CTRL: "Ctrl", CONTROL: "Ctrl", ALT: "Alt", SHIFT: "Shift", SUPER: "Win" };
+    var parts = hotkey.toUpperCase().split("+").map(function (p) { return (s.mac ? mac : win)[p] || p; });
+    return parts.join(s.mac ? "" : "+");
+  }
+
   invoke("boot").then(function (b) {
-    ui.hotkey.textContent = b.hotkey.toUpperCase().replace(/CTRL/, "Ctrl").replace(/ALT/, "Alt").replace(/SHIFT/, "Shift");
+    s.mac = b.platform === "macos";
+    ui.hotkey.textContent = hotkeyText(b.hotkey);
     s.lang = pickLanguage(b.language);
     s.downloadOnly = b.downloadOnly;
     ui.sDetectLink.checked = b.detectLink;

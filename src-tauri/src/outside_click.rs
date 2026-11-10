@@ -1,5 +1,6 @@
 //! Clique duplo fora do painel: esconde. Enquanto o painel esta aberto, olha o estado do botao
 //! do mouse algumas vezes por segundo. Nao instala gancho global e nao interfere no clique.
+//! No Mac tambem nao usa monitor global de eventos: so le se o botao esta pressionado.
 
 use std::time::{Duration, Instant};
 
@@ -34,6 +35,7 @@ impl DoubleClick {
     }
 }
 
+#[cfg(windows)]
 #[repr(C)]
 #[derive(Default)]
 struct Point {
@@ -41,6 +43,7 @@ struct Point {
     y: i32,
 }
 
+#[cfg(windows)]
 #[repr(C)]
 #[derive(Default)]
 struct Rect {
@@ -50,6 +53,7 @@ struct Rect {
     bottom: i32,
 }
 
+#[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
     fn GetAsyncKeyState(key: i32) -> i16;
@@ -61,6 +65,7 @@ extern "system" {
 }
 
 /// `busy` diz para ignorar os cliques, como quando uma caixa de dialogo do app esta aberta.
+#[cfg(windows)]
 pub fn watch(window: isize, busy: impl Fn() -> bool + Send + 'static, close: impl Fn() + Send + 'static) {
     const VK_LBUTTON: i32 = 0x01;
     const VK_RBUTTON: i32 = 0x02;
@@ -117,6 +122,56 @@ pub fn watch(window: isize, busy: impl Fn() -> bool + Send + 'static, close: imp
     });
 }
 
+/// Mac: o mesmo controle, com o estado do botao lido do AppKit e a posicao lida do Tauri.
+/// So pergunta onde esta a janela quando ha um clique: o resto do tempo e um numero por leitura.
+#[cfg(target_os = "macos")]
+pub fn watch(window: tauri::WebviewWindow, busy: impl Fn() -> bool + Send + 'static, close: impl Fn() + Send + 'static) {
+    use objc2::{class, msg_send};
+    // Distancia maxima entre os dois cliques, em pixels de tela.
+    const SLOP: i32 = 8;
+    std::thread::spawn(move || {
+        let mut clicks = DoubleClick::default();
+        let mut was_down = false;
+        let mut watching = false;
+        loop {
+            if !window.is_visible().unwrap_or(false) {
+                watching = false;
+                std::thread::sleep(Duration::from_millis(120));
+                continue;
+            }
+            std::thread::sleep(Duration::from_millis(15));
+            let buttons: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+            let down = buttons & 1 != 0;
+            if !watching {
+                // Um clique que ja estava em andamento ao abrir nao conta.
+                watching = true;
+                was_down = down;
+                clicks.reset();
+                continue;
+            }
+            let pressed = down && !was_down;
+            was_down = down;
+            if !pressed {
+                continue;
+            }
+            if busy() {
+                clicks.reset();
+                continue;
+            }
+            let (Ok(cursor), Ok(position), Ok(size)) = (window.cursor_position(), window.outer_position(), window.outer_size()) else {
+                clicks.reset();
+                continue;
+            };
+            let (x, y) = (cursor.x as i32, cursor.y as i32);
+            let inside = x >= position.x && x < position.x + size.width as i32 && y >= position.y && y < position.y + size.height as i32;
+            let seconds: f64 = unsafe { msg_send![class!(NSEvent), doubleClickInterval] };
+            let limits = Limits { time: Duration::from_secs_f64(seconds.clamp(0.2, 2.0)), width: SLOP * 2, height: SLOP * 2 };
+            if clicks.press(Instant::now(), x, y, inside, limits) {
+                close();
+            }
+        }
+    });
+}
 #[cfg(test)]
 mod tests {
     use super::*;

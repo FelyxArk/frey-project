@@ -6,14 +6,12 @@ use crate::convert::find_tool;
 use crate::drive::{Error, Outcome, Progress};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-const NO_WINDOW: u32 = 0x0800_0000;
 pub const MISSING: &str = "err.ytMissing";
 const PROGRESS_PREFIX: &str = "FREYPROG|";
 const DONE_PREFIX: &str = "FREYDONE|";
@@ -146,12 +144,7 @@ pub fn friendly_error(stderr: &str) -> String {
 
 fn kill_tree(pid: u32) {
     // yt-dlp abre o ffmpeg como filho: encerrar so ele deixaria o filho rodando.
-    let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &pid.to_string()])
-        .creation_flags(NO_WINDOW)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    crate::platform::kill_tree(pid);
 }
 
 fn existing_files(dest: &Path) -> HashSet<PathBuf> {
@@ -186,11 +179,12 @@ fn run(tool: &Path, url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, 
 fn attempt(tool: &Path, url: &str, dest: &Path, quality: &str, skip_hls: bool, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
     std::fs::create_dir_all(dest)?;
     let before = existing_files(dest);
-    let mut child = Command::new(tool)
+    let mut command = Command::new(tool);
+    crate::platform::quiet(&mut command);
+    crate::platform::own_group(&mut command);
+    let mut child = command
         .args(build_args(url, dest, quality, skip_hls))
         .env("PYTHONUTF8", "1")
-        .creation_flags(NO_WINDOW)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

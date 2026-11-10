@@ -7,3 +7,8 @@ dist/
 # Rascunho antigo e arquivos de conferencia
 prototipo-powershell/
 packaging/branding/icon-preview.png
+
+# Build do Mac (gerados no GitHub Actions)
+src-tauri/binaries/
+packaging/build-macos/
+work/

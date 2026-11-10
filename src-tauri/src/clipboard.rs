@@ -10,13 +10,30 @@ use std::time::{Duration, Instant};
 pub const MAX_AGE: Duration = Duration::from_secs(10 * 60);
 const MAX_TEXT: usize = 20_000;
 
+#[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
     fn GetClipboardSequenceNumber() -> u32;
 }
 
+#[cfg(windows)]
 fn current_sequence() -> u32 {
     unsafe { GetClipboardSequenceNumber() }
+}
+
+/// No Mac o equivalente e o contador de mudancas da area de transferencia: tambem so um numero.
+#[cfg(target_os = "macos")]
+fn current_sequence() -> u32 {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    unsafe {
+        let board: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
+        if board.is_null() {
+            return 0;
+        }
+        let count: isize = msg_send![board, changeCount];
+        count as u32
+    }
 }
 
 #[derive(Default)]
