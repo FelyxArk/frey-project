@@ -28,7 +28,7 @@ jobs:
             ffmpeg: amd64/1789931006_9.0.2
             deno: deno-x86_64-apple-darwin.zip
             label: intel
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
