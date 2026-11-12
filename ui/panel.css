@@ -76,6 +76,12 @@ button { cursor: pointer; }
 .fields .field:not(.field--grow):not(.field--small):not(.field--half) { width: 170px; flex: none; }
 .check { display: flex; align-items: center; gap: 6px; align-self: flex-end; height: 30px; color: var(--fk-muted); font-size: 11px; }
 .check input { margin: 0; accent-color: var(--fk-gold); }
+/* Login do YouTube: aviso de risco para a conta, sempre visivel e em destaque. */
+.risk { margin: 4px 12px 10px; padding: 10px 0 2px; border: 1px solid var(--fk-danger); border-radius: var(--fk-radius); background: var(--fk-danger-bg); }
+.risk__title { margin: 0; padding: 0 12px 4px; color: var(--fk-danger); font-size: 13px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+.risk__text { margin: 0; padding: 0 12px 6px; color: var(--fk-text); font-size: 12px; line-height: 17px; }
+.risk .check--risk { align-self: auto; height: auto; padding: 2px 12px 4px; color: var(--fk-text); font-weight: 600; }
+.risk .fields { padding-top: 4px; }
 .drop { display: block; width: calc(100% - 24px); height: 44px; margin: 0 12px 8px; border: 1px dashed var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); color: var(--fk-muted); }
 .drop:hover:not(:disabled), .is-dropping .drop { border-color: var(--fk-focus); color: var(--fk-text); }
 .drop:disabled { opacity: .5; cursor: default; }

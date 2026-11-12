@@ -48,6 +48,22 @@ struct Settings {
     so_baixar: bool,
     #[serde(default)]
     ignorar_link_copiado: bool,
+    /// Login do YouTube: "" desligado, "firefox", "brave", "safari" e "chrome" (Mac) ou "file".
+    #[serde(default)]
+    youtube_login: String,
+    #[serde(default)]
+    youtube_cookies: String,
+    /// O usuario marcou que entende o risco para a conta. Sem isso o login fica desligado.
+    #[serde(default)]
+    youtube_risco_aceito: bool,
+}
+
+fn youtube_login(app: &AppHandle) -> Option<youtube::Login> {
+    let settings = app.state::<Shared>().settings.lock().unwrap().clone();
+    if !settings.youtube_risco_aceito {
+        return None;
+    }
+    youtube::Login::from_settings(&settings.youtube_login, &settings.youtube_cookies)
 }
 
 #[derive(Default)]
@@ -237,6 +253,9 @@ struct Boot {
     detect_link: bool,
     /// "windows" ou "macos": o painel mostra os atalhos do sistema.
     platform: &'static str,
+    youtube_login: String,
+    youtube_cookies: String,
+    youtube_risk: bool,
 }
 
 #[tauri::command]
@@ -247,6 +266,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
     let visible = panel(&app).is_visible().unwrap_or(false);
     let download_only = settings.so_baixar;
     let detect_link = !settings.ignorar_link_copiado;
+    let (yt_login, yt_cookies, yt_risk) = (settings.youtube_login.clone(), settings.youtube_cookies.clone(), settings.youtube_risco_aceito);
     let hotkey = if settings.atalho.is_empty() { DEFAULT_HOTKEY.to_string() } else { settings.atalho.clone() };
     let running = state.cancel.lock().unwrap().is_some();
     let hotkey_error = state.hotkey_error.lock().unwrap().clone();
@@ -259,7 +279,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| names[0].clone());
             let dest = if Path::new(&settings.destino).is_dir() { settings.destino } else { String::new() };
-            Boot { models: names, default_name: cfg.default_name, model, dest, hotkey, hotkey_error, config_error: None, running, language, visible, download_only, detect_link, platform: std::env::consts::OS }
+            Boot { models: names, default_name: cfg.default_name, model, dest, hotkey, hotkey_error, config_error: None, running, language, visible, download_only, detect_link, platform: std::env::consts::OS, youtube_login: yt_login, youtube_cookies: yt_cookies, youtube_risk: yt_risk }
         }
         Err(e) => Boot {
             models: Vec::new(),
@@ -270,6 +290,9 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
             hotkey_error,
             config_error: Some(e),
             platform: std::env::consts::OS,
+            youtube_login: yt_login,
+            youtube_cookies: yt_cookies,
+            youtube_risk: yt_risk,
             running,
             language,
             visible,
@@ -534,7 +557,7 @@ fn download_for_editing(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(url, &mut hasher);
     let temp = target.join(format!(".frey-4k-{:016x}", std::hash::Hasher::finish(&hasher)));
-    youtube::download(url, &temp, "edit4k", cancel, on_progress)?;
+    youtube::download(url, &temp, "edit4k", youtube_login(app).as_ref(), cancel, on_progress)?;
 
     let mut sources: Vec<PathBuf> = std::fs::read_dir(&temp)?.filter_map(Result::ok).map(|e| e.path()).filter(|p| convert::is_media(p)).collect();
     sources.sort();
@@ -577,6 +600,7 @@ fn download_for_editing(
 
 fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<AtomicBool>, open_at_end: bool, convert_to: String) {
     let client = drive::Client::new();
+    let login = youtube_login(&app);
     let (mut ok, mut failed) = (0, 0);
     let total = items.len();
     for (position, item) in items.iter().enumerate() {
@@ -606,7 +630,7 @@ fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<Atomi
         let result = if youtube::handles(&item.kind) && item.quality == "edit4k" {
             download_for_editing(&app, item.id, &item.url, &target, &cancel, &mut on_progress, &mut edit_error)
         } else if youtube::handles(&item.kind) {
-            youtube::download(&item.url, &target, &item.quality, &cancel, &mut on_progress)
+            youtube::download(&item.url, &target, &item.quality, login.as_ref(), &cancel, &mut on_progress)
         } else {
             client.download_link(&link, &target, &cancel, &mut on_progress)
         };
@@ -916,6 +940,31 @@ fn take_copied_links(app: AppHandle, state: State<Shared>) -> Vec<drive::Link> {
     app.clipboard().read_text().map(|text| clipboard::links_in(&text)).unwrap_or_default()
 }
 
+/// Liga ou desliga o login do YouTube. Sem a confirmacao do risco, fica sempre desligado.
+#[tauri::command]
+fn set_youtube_login(app: AppHandle, state: State<Shared>, source: String, file: String, accepted: bool) {
+    let mut settings = state.settings.lock().unwrap();
+    settings.youtube_risco_aceito = accepted;
+    settings.youtube_login = if accepted { source } else { String::new() };
+    settings.youtube_cookies = file;
+    save_settings(&app, &settings);
+}
+
+#[tauri::command]
+fn pick_cookies_file(app: AppHandle, state: State<Shared>) -> Option<String> {
+    state.dialog_open.store(true, Ordering::SeqCst);
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("cookies.txt")
+        .set_parent(&panel(&app))
+        .add_filter("cookies.txt", &["txt"])
+        .blocking_pick_file();
+    state.dialog_open.store(false, Ordering::SeqCst);
+    let _ = panel(&app).set_focus();
+    picked.and_then(|p| p.into_path().ok()).map(|p| p.display().to_string())
+}
+
 #[tauri::command]
 fn set_detect_link(app: AppHandle, state: State<Shared>, detect: bool) {
     let mut settings = state.settings.lock().unwrap();
@@ -1074,7 +1123,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             boot, preview, parse_links, pick_folder, start_job, cancel_job, open_project, hide_panel, resize_panel,
             convert_tools, only_files, is_folder, pick_files, pick_out_dir, start_convert, open_converted,
-            get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link
+            get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link, set_youtube_login, pick_cookies_file
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {

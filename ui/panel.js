@@ -19,7 +19,7 @@
     tabProject: $("tabProject"), tabConvert: $("tabConvert"), tabSettings: $("tabSettings"),
     viewProject: $("viewProject"), viewConvert: $("viewConvert"), viewSettings: $("viewSettings"),
     cFormat: $("cFormat"), cMode: $("cMode"), cQuality: $("cQuality"), cOut: $("cOut"), cGpu: $("cGpu"), cGpuLabel: $("cGpuLabel"), cAdd: $("cAdd"), cRows: $("cRows"),
-    sLanguage: $("sLanguage"), sOpenAtEnd: $("sOpenAtEnd"), sDetectLink: $("sDetectLink"), sModel: $("sModel"), sNew: $("sNew"), sDuplicate: $("sDuplicate"), sDelete: $("sDelete"),
+    sLanguage: $("sLanguage"), sOpenAtEnd: $("sOpenAtEnd"), sDetectLink: $("sDetectLink"), sYtRisk: $("sYtRisk"), sYtLogin: $("sYtLogin"), sYtCookies: $("sYtCookies"), sYtCookiesPath: $("sYtCookiesPath"), sModel: $("sModel"), sNew: $("sNew"), sDuplicate: $("sDuplicate"), sDelete: $("sDelete"),
     sName: $("sName"), sRoot: $("sRoot"), sFolderList: $("sFolderList"), sAddFolder: $("sAddFolder"), sTree: $("sTree"), sRestore: $("sRestore")
   };
   var s = {
@@ -80,6 +80,36 @@
     disarm();
     refreshControls();
     refreshSettingsTree();
+    renderYoutubeLogin();
+    fit();
+  }
+
+  // ---- login do YouTube: desligado por padrao; so liga depois de aceitar o risco
+
+  function youtubeSources() {
+    // Chrome e Edge no Windows protegem o login contra outros programas: o yt-dlp nao consegue ler.
+    // Brave usa a mesma base do Chrome e pode ter a mesma protecao: se nao der para ler, o app avisa.
+    var list = [["", "ytLoginOff"], ["firefox", "ytLoginFirefox"], ["brave", "ytLoginBrave"]];
+    if (s.mac) list.push(["safari", "ytLoginSafari"], ["chrome", "ytLoginChrome"]);
+    list.push(["file", "ytLoginFile"]);
+    return list;
+  }
+
+  function renderYoutubeLogin() {
+    var y = s.yt || { source: "", file: "", risk: false };
+    while (ui.sYtLogin.firstChild) ui.sYtLogin.removeChild(ui.sYtLogin.firstChild);
+    youtubeSources().forEach(function (o) { addOption(ui.sYtLogin, o[0], t(o[1])); });
+    ui.sYtRisk.checked = y.risk;
+    ui.sYtLogin.value = y.risk ? y.source : "";
+    ui.sYtLogin.disabled = !y.risk;
+    ui.sYtCookies.hidden = !y.risk || y.source !== "file";
+    ui.sYtCookiesPath.hidden = ui.sYtCookies.hidden;
+    ui.sYtCookiesPath.textContent = y.file || t("ytLoginNoFile");
+  }
+
+  function saveYoutubeLogin() {
+    invoke("set_youtube_login", { source: s.yt.risk ? s.yt.source : "", file: s.yt.file, accepted: s.yt.risk });
+    renderYoutubeLogin();
     fit();
   }
 
@@ -801,6 +831,15 @@
   });
   ui.sOpenAtEnd.addEventListener("change", persist);
   ui.sDetectLink.addEventListener("change", function () { invoke("set_detect_link", { detect: ui.sDetectLink.checked }); });
+  ui.sYtRisk.addEventListener("change", function () {
+    s.yt.risk = ui.sYtRisk.checked;
+    if (!s.yt.risk) s.yt.source = "";
+    saveYoutubeLogin();
+  });
+  ui.sYtLogin.addEventListener("change", function () { s.yt.source = ui.sYtLogin.value; saveYoutubeLogin(); });
+  ui.sYtCookies.addEventListener("click", function () {
+    invoke("pick_cookies_file").then(function (path) { if (path) { s.yt.file = path; saveYoutubeLogin(); } });
+  });
   ui.sModel.addEventListener("change", function () {
     if (s.saveTimer) persist();
     disarm();
@@ -937,6 +976,7 @@
     s.lang = pickLanguage(b.language);
     s.downloadOnly = b.downloadOnly;
     ui.sDetectLink.checked = b.detectLink;
+    s.yt = { source: b.youtubeLogin, file: b.youtubeCookies, risk: b.youtubeRisk };
     ui.sLanguage.value = s.lang;
     if (s.lang !== b.language) invoke("set_language", { language: s.lang });
     if (b.configError) {
