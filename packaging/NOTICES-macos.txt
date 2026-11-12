@@ -1,0 +1,21 @@
+Frey Project inclui os programas abaixo, sem alteracao, dentro do aplicativo (Contents/MacOS).
+Cada um pertence aos seus autores e segue a sua propria licenca.
+
+FFmpeg (ffmpeg, ffprobe) - compilacao estatica de Martin Riedl
+  Licenca: GNU GPL versao 3 (texto em licenses/FFmpeg-LICENSE.txt)
+  Codigo-fonte da versao incluida: https://ffmpeg.org/releases/ffmpeg-{{FFMPEG}}.tar.xz
+  Compilacao e bibliotecas: https://ffmpeg.martin-riedl.de/
+
+yt-dlp (yt-dlp)
+  Licenca: The Unlicense, com componentes de terceiros descritos pelo projeto
+  Codigo-fonte: https://github.com/yt-dlp/yt-dlp
+
+Deno (deno)
+  Licenca: MIT
+  Codigo-fonte: https://github.com/denoland/deno
+
+O proprio Frey Project esta sob a licenca MIT (licenses/Frey-Project-LICENSE.txt).
+As bibliotecas Rust dentro do executavel estao em licenses/Rust-Libraries.txt.
+
+Versoes incluidas neste aplicativo:
+{{VERSIONS}}

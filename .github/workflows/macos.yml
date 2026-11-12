@@ -1,0 +1,115 @@
+# Gera o Frey Project para Mac (Apple Silicon e Intel) e, com os segredos da Apple
+# configurados no repositorio, assina e reconhece em cartorio (notariza). Sem os segredos,
+# gera um app sem assinatura, que so serve para teste.
+name: Mac
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mac]
+
+permissions:
+  contents: read
+
+env:
+  FFMPEG_VERSION: "9.0.2"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            ffmpeg: arm64/1789931890_9.0.2
+            deno: deno-aarch64-apple-darwin.zip
+            label: apple-silicon
+          - target: x86_64-apple-darwin
+            ffmpeg: amd64/1789931006_9.0.2
+            deno: deno-x86_64-apple-darwin.zip
+            label: intel
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Programas incluidos
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=src-tauri/binaries
+          mkdir -p "$bin" work
+          get() { curl -fsSL --retry 5 --retry-delay 3 -o "$2" "$1"; }
+          for tool in ffmpeg ffprobe; do
+            base="https://ffmpeg.martin-riedl.de/download/macos/${{ matrix.ffmpeg }}/$tool.zip"
+            get "$base" "work/$tool.zip"
+            get "$base.sha256" "work/$tool.zip.sha256"
+            echo "$(awk '{print $1}' "work/$tool.zip.sha256")  work/$tool.zip" | shasum -a 256 -c -
+            unzip -o -q "work/$tool.zip" -d work
+            mv "work/$tool" "$bin/$tool-${{ matrix.target }}"
+          done
+          get "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" "$bin/yt-dlp-${{ matrix.target }}"
+          get "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS" work/yt-dlp.sums
+          echo "$(grep ' yt-dlp_macos$' work/yt-dlp.sums | awk '{print $1}')  $bin/yt-dlp-${{ matrix.target }}" | shasum -a 256 -c -
+          get "https://github.com/denoland/deno/releases/latest/download/${{ matrix.deno }}" work/deno.zip
+          get "https://github.com/denoland/deno/releases/latest/download/${{ matrix.deno }}.sha256sum" work/deno.sha
+          echo "$(awk '{print $1}' work/deno.sha)  work/deno.zip" | shasum -a 256 -c -
+          unzip -o -q work/deno.zip -d work
+          mv work/deno "$bin/deno-${{ matrix.target }}"
+          chmod +x "$bin"/*
+          file "$bin"/*
+
+      - name: Avisos de licenca
+        shell: pwsh
+        run: |
+          $out = 'packaging/build-macos'
+          New-Item -ItemType Directory -Force -Path "$out/licenses" | Out-Null
+          ./packaging/Collect-Licenses.ps1 -OutFile "$out/licenses/Rust-Libraries.txt" -Platform '${{ matrix.target }}'
+          Copy-Item LICENSE "$out/licenses/Frey-Project-LICENSE.txt"
+          Invoke-WebRequest "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n$env:FFMPEG_VERSION/COPYING.GPLv3" -OutFile "$out/licenses/FFmpeg-LICENSE.txt"
+          $bin = 'src-tauri/binaries'
+          $isArm = '${{ matrix.target }}' -like 'aarch64*'
+          $versions = @(
+            '  ffmpeg: ' + $env:FFMPEG_VERSION,
+            '  yt-dlp: ' + $(if ($isArm) { & "$bin/yt-dlp-${{ matrix.target }}" --version } else { 'versao do yt-dlp_macos universal' }),
+            '  deno: ' + $(if ($isArm) { (& "$bin/deno-${{ matrix.target }}" --version | Select-Object -First 1) } else { 'versao mais recente para Intel' })
+          ) -join "`n"
+          (Get-Content packaging/NOTICES-macos.txt -Raw).Replace('{{FFMPEG}}', $env:FFMPEG_VERSION).Replace('{{VERSIONS}}', $versions) | Set-Content "$out/NOTICES.txt" -NoNewline
+
+      - name: Icone do Mac
+        run: npx --yes @tauri-apps/cli@2 icon src-tauri/icons/icon.png --output work/icons && cp work/icons/icon.icns src-tauri/icons/icon.icns
+
+      - name: Compilar e assinar
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Sem segredos, nenhuma variavel vazia pode chegar ao Tauri: ele tentaria assinar com elas.
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then unset "$name"; fi
+          done
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then echo "::warning::Sem os segredos da Apple: o app sai sem assinatura, so para teste."; fi
+          npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }} --bundles app,dmg
+
+      - name: Conferir assinatura
+        shell: bash
+        run: |
+          app=$(ls -d src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app)
+          codesign -dv --verbose=2 "$app" 2>&1 | grep -E 'Authority|TeamIdentifier|Signature' || true
+          spctl -a -vv -t exec "$app" 2>&1 || true
+          ls -la "$app/Contents/MacOS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Frey-Project-mac-${{ matrix.label }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error

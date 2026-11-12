@@ -8,6 +8,7 @@ mod drive;
 mod i18n;
 mod models;
 mod outside_click;
+mod platform;
 mod youtube;
 
 use serde::{Deserialize, Serialize};
@@ -23,10 +24,14 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+#[cfg(not(target_os = "macos"))]
 const DEFAULT_HOTKEY: &str = "ctrl+alt+p";
+#[cfg(target_os = "macos")]
+const DEFAULT_HOTKEY: &str = "cmd+alt+p";
 const PANEL_WIDTH: f64 = 640.0;
 const TRAY_ID: &str = "main";
 const HIDDEN_ARG: &str = "--hidden";
+#[cfg(windows)]
 const JUST_OPENED: std::time::Duration = std::time::Duration::from_millis(1500);
 
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -43,6 +48,22 @@ struct Settings {
     so_baixar: bool,
     #[serde(default)]
     ignorar_link_copiado: bool,
+    /// Login do YouTube: "" desligado, "firefox", "brave", "safari" e "chrome" (Mac) ou "file".
+    #[serde(default)]
+    youtube_login: String,
+    #[serde(default)]
+    youtube_cookies: String,
+    /// O usuario marcou que entende o risco para a conta. Sem isso o login fica desligado.
+    #[serde(default)]
+    youtube_risco_aceito: bool,
+}
+
+fn youtube_login(app: &AppHandle) -> Option<youtube::Login> {
+    let settings = app.state::<Shared>().settings.lock().unwrap().clone();
+    if !settings.youtube_risco_aceito {
+        return None;
+    }
+    youtube::Login::from_settings(&settings.youtube_login, &settings.youtube_cookies)
 }
 
 #[derive(Default)]
@@ -92,6 +113,7 @@ fn save_settings(app: &AppHandle, settings: &Settings) {
     }
 }
 
+#[cfg(windows)]
 /// Ponto na borda direita do monitor mais a direita: nenhuma tela mostra a janela a partir dali.
 /// O Windows so aceita criar a janela com a origem dentro de um monitor, por isso nao vai mais longe.
 fn beyond_the_screens(app: &AppHandle) -> Option<(f64, f64)> {
@@ -126,6 +148,7 @@ fn show_panel(app: &AppHandle) {
     *state.panel_shown_at.lock().unwrap() = Some(Instant::now());
     let _ = window.show();
     let _ = window.set_focus();
+    #[cfg(windows)]
     take_foreground(window.hwnd().ok().map(|h| h.0 as *mut std::ffi::c_void));
     let _ = window.emit("panel-shown", ());
 }
@@ -141,6 +164,7 @@ fn toggle_panel(app: &AppHandle) {
 
 /// Abre a pasta no Explorer; se ela ja estiver aberta, traz essa janela em vez de abrir outra.
 /// Roda em outra thread porque perguntar ao Windows leva alguns décimos de segundo.
+#[cfg(windows)]
 fn open_folder(path: &Path) {
     let path = path.to_path_buf();
     std::thread::spawn(move || match find_open_folder(&path) {
@@ -151,9 +175,17 @@ fn open_folder(path: &Path) {
     });
 }
 
+/// No Mac o Finder ja traz a janela aberta na pasta em vez de abrir outra.
+#[cfg(not(windows))]
+fn open_folder(path: &Path) {
+    let _ = std::process::Command::new("open").arg(path).spawn();
+}
+
+#[cfg(windows)]
 const FIND_FOLDER_SCRIPT: &str = "$want=[IO.Path]::GetFullPath($env:FREY_OPEN_PATH).TrimEnd('\\');foreach($w in (New-Object -ComObject Shell.Application).Windows()){try{$p=$w.Document.Folder.Self.Path;if($p -and $p.TrimEnd('\\') -ieq $want){[int64]$w.HWND;break}}catch{}}";
 
 /// Janela do Explorer ja aberta nesta pasta. Na duvida devolve None, e abre uma janela nova como antes.
+#[cfg(windows)]
 fn find_open_folder(path: &Path) -> Option<isize> {
     use std::os::windows::process::CommandExt;
     let mut child = std::process::Command::new("powershell.exe")
@@ -182,6 +214,7 @@ fn find_open_folder(path: &Path) -> Option<isize> {
     text.trim().parse::<isize>().ok().filter(|window| *window != 0)
 }
 
+#[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
     fn IsIconic(window: *mut std::ffi::c_void) -> i32;
@@ -189,6 +222,7 @@ extern "system" {
     fn SetForegroundWindow(window: *mut std::ffi::c_void) -> i32;
 }
 
+#[cfg(windows)]
 fn bring_to_front(window: isize) {
     const SW_RESTORE: i32 = 9;
     let window = window as *mut std::ffi::c_void;
@@ -217,6 +251,11 @@ struct Boot {
     visible: bool,
     download_only: bool,
     detect_link: bool,
+    /// "windows" ou "macos": o painel mostra os atalhos do sistema.
+    platform: &'static str,
+    youtube_login: String,
+    youtube_cookies: String,
+    youtube_risk: bool,
 }
 
 #[tauri::command]
@@ -227,6 +266,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
     let visible = panel(&app).is_visible().unwrap_or(false);
     let download_only = settings.so_baixar;
     let detect_link = !settings.ignorar_link_copiado;
+    let (yt_login, yt_cookies, yt_risk) = (settings.youtube_login.clone(), settings.youtube_cookies.clone(), settings.youtube_risco_aceito);
     let hotkey = if settings.atalho.is_empty() { DEFAULT_HOTKEY.to_string() } else { settings.atalho.clone() };
     let running = state.cancel.lock().unwrap().is_some();
     let hotkey_error = state.hotkey_error.lock().unwrap().clone();
@@ -239,7 +279,7 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| names[0].clone());
             let dest = if Path::new(&settings.destino).is_dir() { settings.destino } else { String::new() };
-            Boot { models: names, default_name: cfg.default_name, model, dest, hotkey, hotkey_error, config_error: None, running, language, visible, download_only, detect_link }
+            Boot { models: names, default_name: cfg.default_name, model, dest, hotkey, hotkey_error, config_error: None, running, language, visible, download_only, detect_link, platform: std::env::consts::OS, youtube_login: yt_login, youtube_cookies: yt_cookies, youtube_risk: yt_risk }
         }
         Err(e) => Boot {
             models: Vec::new(),
@@ -249,6 +289,10 @@ fn boot(app: AppHandle, state: State<Shared>) -> Boot {
             hotkey,
             hotkey_error,
             config_error: Some(e),
+            platform: std::env::consts::OS,
+            youtube_login: yt_login,
+            youtube_cookies: yt_cookies,
+            youtube_risk: yt_risk,
             running,
             language,
             visible,
@@ -513,7 +557,7 @@ fn download_for_editing(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(url, &mut hasher);
     let temp = target.join(format!(".frey-4k-{:016x}", std::hash::Hasher::finish(&hasher)));
-    youtube::download(url, &temp, "edit4k", cancel, on_progress)?;
+    youtube::download(url, &temp, "edit4k", youtube_login(app).as_ref(), cancel, on_progress)?;
 
     let mut sources: Vec<PathBuf> = std::fs::read_dir(&temp)?.filter_map(Result::ok).map(|e| e.path()).filter(|p| convert::is_media(p)).collect();
     sources.sort();
@@ -556,6 +600,7 @@ fn download_for_editing(
 
 fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<AtomicBool>, open_at_end: bool, convert_to: String) {
     let client = drive::Client::new();
+    let login = youtube_login(&app);
     let (mut ok, mut failed) = (0, 0);
     let total = items.len();
     for (position, item) in items.iter().enumerate() {
@@ -564,7 +609,7 @@ fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<Atomi
             continue;
         }
         let _ = app.emit("job", JobEvent::Start { id: item.id });
-        let target = if item.folder.is_empty() { base.clone() } else { base.join(&item.folder) };
+        let target = if item.folder.is_empty() { base.clone() } else { base.join(models::rel_path(&item.folder)) };
         let link = drive::Link { url: item.url.clone(), kind: if item.kind == "folder" { "folder" } else { "file" } };
         let mut last_emit = Instant::now();
         let mut on_progress = |progress: drive::Progress| {
@@ -585,7 +630,7 @@ fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<Atomi
         let result = if youtube::handles(&item.kind) && item.quality == "edit4k" {
             download_for_editing(&app, item.id, &item.url, &target, &cancel, &mut on_progress, &mut edit_error)
         } else if youtube::handles(&item.kind) {
-            youtube::download(&item.url, &target, &item.quality, &cancel, &mut on_progress)
+            youtube::download(&item.url, &target, &item.quality, login.as_ref(), &cancel, &mut on_progress)
         } else {
             client.download_link(&link, &target, &cancel, &mut on_progress)
         };
@@ -895,6 +940,31 @@ fn take_copied_links(app: AppHandle, state: State<Shared>) -> Vec<drive::Link> {
     app.clipboard().read_text().map(|text| clipboard::links_in(&text)).unwrap_or_default()
 }
 
+/// Liga ou desliga o login do YouTube. Sem a confirmacao do risco, fica sempre desligado.
+#[tauri::command]
+fn set_youtube_login(app: AppHandle, state: State<Shared>, source: String, file: String, accepted: bool) {
+    let mut settings = state.settings.lock().unwrap();
+    settings.youtube_risco_aceito = accepted;
+    settings.youtube_login = if accepted { source } else { String::new() };
+    settings.youtube_cookies = file;
+    save_settings(&app, &settings);
+}
+
+#[tauri::command]
+fn pick_cookies_file(app: AppHandle, state: State<Shared>) -> Option<String> {
+    state.dialog_open.store(true, Ordering::SeqCst);
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("cookies.txt")
+        .set_parent(&panel(&app))
+        .add_filter("cookies.txt", &["txt"])
+        .blocking_pick_file();
+    state.dialog_open.store(false, Ordering::SeqCst);
+    let _ = panel(&app).set_focus();
+    picked.and_then(|p| p.into_path().ok()).map(|p| p.display().to_string())
+}
+
 #[tauri::command]
 fn set_detect_link(app: AppHandle, state: State<Shared>, detect: bool) {
     let mut settings = state.settings.lock().unwrap();
@@ -921,6 +991,7 @@ fn resize_panel(app: AppHandle, height: f64) {
 
 // ---------------------------------------------------------------- inicio
 
+#[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
     fn GetForegroundWindow() -> *mut std::ffi::c_void;
@@ -928,6 +999,7 @@ extern "system" {
     fn AttachThreadInput(attach: u32, attach_to: u32, enable: i32) -> i32;
 }
 
+#[cfg(windows)]
 /// O Windows nega o foco a um app em segundo plano, como quando o atalho da Area de Trabalho
 /// chama a copia que ja esta na bandeja. Quem pediu o painel foi o usuario: une-se a fila de
 /// entrada da janela em primeiro plano so durante o pedido.
@@ -949,6 +1021,7 @@ fn take_foreground(own: Option<*mut std::ffi::c_void>) {
 }
 
 /// Durante uma troca o Windows pode nao ter janela em primeiro plano: aguarda definir antes de decidir.
+#[cfg(windows)]
 fn focus_really_left(window: &tauri::Window) -> bool {
     let Ok(own) = window.hwnd() else { return false };
     for _ in 0..10 {
@@ -964,12 +1037,14 @@ fn focus_really_left(window: &tauri::Window) -> bool {
     false
 }
 
+#[cfg(windows)]
 #[link(name = "dwmapi")]
 extern "system" {
     fn DwmSetWindowAttribute(hwnd: *mut std::ffi::c_void, attribute: u32, value: *const std::ffi::c_void, size: u32) -> i32;
 }
 
 /// Tira a borda na cor de destaque que o Windows 11 desenha em volta da janela: destoa do vidro.
+#[cfg(windows)]
 fn remove_accent_border(window: &WebviewWindow) {
     const DWMWA_BORDER_COLOR: u32 = 34;
     const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
@@ -998,10 +1073,12 @@ fn register_hotkey(app: &AppHandle, text: &str) -> Result<(), String> {
         .map_err(|_| i18n::code("err.hotkeyBusy", &[text]))
 }
 
-/// Coloca as ferramentas instaladas junto com o app (pasta bin) na frente do PATH.
+/// Coloca as ferramentas instaladas junto com o app na frente do PATH: a pasta bin no Windows,
+/// e no Mac a pasta do proprio executavel, onde o pacote .app guarda ffmpeg, yt-dlp e Deno.
 /// O yt-dlp tambem acha assim o ffmpeg e o Deno, e a copia embutida vence a do sistema.
 fn use_bundled_tools() {
-    let Some(bin) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("bin"))) else { return };
+    let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) else { return };
+    let bin = if cfg!(target_os = "macos") { dir } else { dir.join("bin") };
     if !bin.is_dir() {
         return;
     }
@@ -1025,6 +1102,10 @@ fn main() {
             }
         }));
     }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![HIDDEN_ARG])));
+    }
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1042,7 +1123,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             boot, preview, parse_links, pick_folder, start_job, cancel_job, open_project, hide_panel, resize_panel,
             convert_tools, only_files, is_folder, pick_files, pick_out_dir, start_convert, open_converted,
-            get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link
+            get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link, set_youtube_login, pick_cookies_file
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
@@ -1051,6 +1132,7 @@ fn main() {
             }
             // Perder o foco nao esconde: o painel fica aberto para receber arquivos do Explorer.
             // Logo depois de abrir, quem iniciou o programa pode recuperar o foco por um instante.
+            #[cfg(windows)]
             WindowEvent::Focused(false) => {
                 let window = window.clone();
                 std::thread::spawn(move || {
@@ -1067,22 +1149,36 @@ fn main() {
             // Nascer escondida faz o painel recusar arquivos arrastados do Explorer.
             // Por isso a janela nasce visivel, sem foco e alem da borda da tela, e so entao se esconde.
             let config = handle.config().app.windows.iter().find(|w| w.label == "panel").cloned().expect("janela do painel na configuracao");
+            #[allow(unused_mut)]
             let mut builder = WebviewWindowBuilder::from_config(&handle, &config)?;
+            #[cfg(windows)]
             if let Some((x, y)) = beyond_the_screens(&handle) {
                 builder = builder.position(x, y);
             }
             let window = builder.build()?;
             let _ = window.hide();
+            #[cfg(windows)]
             remove_accent_border(&window);
+            let (busy, closing) = (handle.clone(), window.clone());
+            let busy = move || busy.state::<Shared>().dialog_open.load(Ordering::SeqCst);
+            let close = move || {
+                let _ = closing.hide();
+            };
+            #[cfg(windows)]
             if let Ok(hwnd) = window.hwnd() {
-                let (busy, closing) = (handle.clone(), window.clone());
-                outside_click::watch(
-                    hwnd.0 as isize,
-                    move || busy.state::<Shared>().dialog_open.load(Ordering::SeqCst),
-                    move || {
-                        let _ = closing.hide();
-                    },
-                );
+                outside_click::watch(hwnd.0 as isize, busy, close);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                outside_click::watch(window.clone(), busy, close);
+                // Como na bandeja do Windows: so o icone na barra de menus, sem icone no Dock.
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                // Iniciar com o Mac. O instalador do Windows ja grava isso no registro.
+                use tauri_plugin_autostart::ManagerExt;
+                let launcher = handle.autolaunch();
+                if !launcher.is_enabled().unwrap_or(true) {
+                    let _ = launcher.enable();
+                }
             }
             let settings: Settings = settings_path(&handle)
                 .and_then(|p| std::fs::read_to_string(p).ok())
@@ -1120,6 +1216,14 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("erro ao iniciar o Frey Project");
+        .build(tauri::generate_context!())
+        .expect("erro ao iniciar o Frey Project")
+        .run(|_app, _event| {
+            // No Mac, abrir o app de novo pelo Finder ou pelo Launchpad nao inicia outra copia:
+            // o sistema avisa a que ja esta rodando, e ela mostra o painel.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                show_panel(_app);
+            }
+        });
 }

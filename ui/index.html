@@ -119,6 +119,23 @@
           <span data-i18n="detectLink"></span>
         </label>
       </div>
+      <section class="risk" aria-labelledby="ytLoginTitle">
+        <h2 class="risk__title" id="ytLoginTitle" data-i18n="ytLoginTitle"></h2>
+        <p class="risk__text" data-i18n="ytLoginWarning"></p>
+        <label class="check check--risk">
+          <input id="sYtRisk" type="checkbox">
+          <span data-i18n="ytLoginAccept"></span>
+        </label>
+        <div class="fields fields--end">
+          <label class="field field--grow">
+            <span data-i18n="ytLoginSource"></span>
+            <select id="sYtLogin"></select>
+          </label>
+          <button id="sYtCookies" class="btn btn--small" type="button" data-i18n="ytLoginPickFile" hidden></button>
+        </div>
+        <p class="hint" id="sYtCookiesPath" hidden></p>
+        <p class="hint" data-i18n="ytLoginHint"></p>
+      </section>
       <div class="fields fields--end">
         <label class="field field--grow">
           <span data-i18n="modelsTitle"></span>

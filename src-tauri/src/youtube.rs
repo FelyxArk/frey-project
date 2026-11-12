@@ -1,22 +1,47 @@
 //! Download de YouTube, X, Instagram e TikTok pelo yt-dlp instalado no PATH.
 //! Esses sites mudam com frequencia; quem acompanha isso e o yt-dlp, nao este app.
-//! Nunca sobrescreve (--no-overwrites), retoma parciais e nao usa cookies do usuario.
+//! Nunca sobrescreve (--no-overwrites) e retoma parciais. So usa a conta do usuario se ele ligar
+//! o login do YouTube nas Configuracoes, e mesmo assim so quando o YouTube recusa sem login.
 
 use crate::convert::find_tool;
 use crate::drive::{Error, Outcome, Progress};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-const NO_WINDOW: u32 = 0x0800_0000;
 pub const MISSING: &str = "err.ytMissing";
 const PROGRESS_PREFIX: &str = "FREYPROG|";
 const DONE_PREFIX: &str = "FREYDONE|";
+
+/// Login do YouTube escolhido nas Configuracoes: navegador de onde o yt-dlp le a sessao,
+/// ou um arquivo cookies.txt exportado pelo usuario.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Login {
+    Browser(String),
+    File(PathBuf),
+}
+
+impl Login {
+    /// None quando desligado ou incompleto (arquivo ainda nao escolhido).
+    pub fn from_settings(source: &str, file: &str) -> Option<Login> {
+        match source {
+            "firefox" | "brave" | "safari" | "chrome" => Some(Login::Browser(source.to_string())),
+            "file" if !file.is_empty() => Some(Login::File(PathBuf::from(file))),
+            _ => None,
+        }
+    }
+
+    fn args(&self) -> [String; 2] {
+        match self {
+            Login::Browser(name) => ["--cookies-from-browser".into(), name.clone()],
+            Login::File(path) => ["--cookies".into(), path.display().to_string()],
+        }
+    }
+}
 
 /// Tipos de link que este modulo baixa.
 pub fn handles(kind: &str) -> bool {
@@ -66,7 +91,7 @@ fn needs_hls(stderr: &str) -> bool {
     lower.contains("no video formats found") || lower.contains("requested format is not available") || lower.contains("live stream")
 }
 
-fn build_args(url: &str, dest: &Path, quality: &str, skip_hls: bool) -> Vec<String> {
+fn build_args(url: &str, dest: &Path, quality: &str, skip_hls: bool, login: Option<&Login>) -> Vec<String> {
     let mut args: Vec<String> = vec!["-P".into(), dest.display().to_string()];
     let fixed = [
         "--ignore-config", "--no-playlist", "--no-overwrites", "--continue", "--newline", "--encoding", "utf-8",
@@ -84,6 +109,9 @@ fn build_args(url: &str, dest: &Path, quality: &str, skip_hls: bool) -> Vec<Stri
     }
     if skip_hls {
         args.extend(["--extractor-args".to_string(), SKIP_HLS.to_string()]);
+    }
+    if let Some(login) = login {
+        args.extend(login.args());
     }
     args.push("--".into());
     args.push(url.to_string());
@@ -123,6 +151,10 @@ pub fn friendly_error(stderr: &str) -> String {
         .unwrap_or("err.ytFailed")
         .trim();
     let lower = last.to_lowercase();
+    // Falha ao ler o login do navegador ou o arquivo: vem antes, porque tambem fala em cookies.
+    if lower.contains("cookies database") || lower.contains("cookie database") || lower.contains("netscape format") || lower.contains("failed to decrypt") || lower.contains("could not copy") {
+        return "err.ytCookiesRead".into();
+    }
     if lower.contains("no video could be found") || lower.contains("no video in this") {
         "err.ytNoVideo".into()
     } else if lower.contains("ip address is blocked") || lower.contains("not available in your") {
@@ -146,12 +178,7 @@ pub fn friendly_error(stderr: &str) -> String {
 
 fn kill_tree(pid: u32) {
     // yt-dlp abre o ffmpeg como filho: encerrar so ele deixaria o filho rodando.
-    let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &pid.to_string()])
-        .creation_flags(NO_WINDOW)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    crate::platform::kill_tree(pid);
 }
 
 fn existing_files(dest: &Path) -> HashSet<PathBuf> {
@@ -171,26 +198,51 @@ fn remove_intermediates(dest: &Path, before: &HashSet<PathBuf>, finals: &[PathBu
     }
 }
 
-pub fn download(url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
+pub fn download(url: &str, dest: &Path, quality: &str, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
     let tool = find_tool("yt-dlp").ok_or_else(|| Error::Message(MISSING.into()))?;
-    run(&tool, url, dest, quality, cancel, on_progress)
+    run(&tool, url, dest, quality, login, cancel, on_progress)
 }
 
-fn run(tool: &Path, url: &str, dest: &Path, quality: &str, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
-    match attempt(tool, url, dest, quality, is_youtube(url), cancel, on_progress) {
-        Err(Error::Message(message)) if message == RETRY_WITH_HLS => attempt(tool, url, dest, quality, false, cancel, on_progress),
+const LOGIN_ASKED: &str = "err.ytLogin";
+
+/// Sempre tenta sem a conta. So se o YouTube recusar por falta de login, e o usuario tiver ligado
+/// o login, tenta de novo com ele: a conta so e usada quando nao ha outro jeito.
+fn run(tool: &Path, url: &str, dest: &Path, quality: &str, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
+    let first = run_once(tool, url, dest, quality, None, cancel, on_progress);
+    if !matches!(&first, Err(Error::Message(m)) if m == LOGIN_ASKED) || !is_youtube(url) {
+        return first;
+    }
+    let Some(login) = login else {
+        return Err(Error::Message("err.ytLoginOff".into()));
+    };
+    if let Login::File(path) = login {
+        if !path.is_file() {
+            return Err(Error::Message("err.ytCookiesRead".into()));
+        }
+    }
+    match run_once(tool, url, dest, quality, Some(login), cancel, on_progress) {
+        Err(Error::Message(m)) if m == LOGIN_ASKED => Err(Error::Message("err.ytLoginRefused".into())),
         other => other,
     }
 }
 
-fn attempt(tool: &Path, url: &str, dest: &Path, quality: &str, skip_hls: bool, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
+fn run_once(tool: &Path, url: &str, dest: &Path, quality: &str, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
+    match attempt(tool, url, dest, quality, is_youtube(url), login, cancel, on_progress) {
+        Err(Error::Message(message)) if message == RETRY_WITH_HLS => attempt(tool, url, dest, quality, false, login, cancel, on_progress),
+        other => other,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attempt(tool: &Path, url: &str, dest: &Path, quality: &str, skip_hls: bool, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
     std::fs::create_dir_all(dest)?;
     let before = existing_files(dest);
-    let mut child = Command::new(tool)
-        .args(build_args(url, dest, quality, skip_hls))
+    let mut command = Command::new(tool);
+    crate::platform::quiet(&mut command);
+    crate::platform::own_group(&mut command);
+    let mut child = command
+        .args(build_args(url, dest, quality, skip_hls, login))
         .env("PYTHONUTF8", "1")
-        .creation_flags(NO_WINDOW)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -298,7 +350,7 @@ mod tests {
         std::fs::write(dest.join("Clipe.m4a"), "meu arquivo").unwrap();
         std::fs::write(dest.join("Outro.webm"), "outro").unwrap();
         let tool = fake(&dir, "echo x> \"%~2\\Clipe.webm\"\r\necho x> \"%~2\\Clipe.mp3\"\r\necho FREYDONE^|%~2\\Clipe.mp3");
-        let outcome = run(&tool, URL, &dest, "audio-mp3", &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let outcome = run(&tool, URL, &dest, "audio-mp3", None, &AtomicBool::new(false), &mut |_| {}).unwrap();
         assert_eq!(outcome.files, vec![dest.join("Clipe.mp3")]);
         assert_eq!(std::fs::read_to_string(dest.join("Clipe.m4a")).unwrap(), "meu arquivo");
         assert!(dest.join("Outro.webm").exists(), "arquivo de outro video fica");
@@ -314,8 +366,8 @@ mod tests {
 
     #[test]
     fn audio_pede_para_manter_e_video_nao() {
-        assert!(build_args(URL, Path::new("D:\\p"), "audio-mp3", true).iter().any(|a| a == "--keep-video"));
-        assert!(!build_args(URL, Path::new("D:\\p"), "1080", true).iter().any(|a| a == "--keep-video"));
+        assert!(build_args(URL, Path::new("D:\\p"), "audio-mp3", true, None).iter().any(|a| a == "--keep-video"));
+        assert!(!build_args(URL, Path::new("D:\\p"), "1080", true, None).iter().any(|a| a == "--keep-video"));
     }
 
     #[test]
@@ -324,7 +376,7 @@ mod tests {
         let script = "echo %* | findstr /c:\"skip=hls\" >nul && (echo ERROR: [youtube] No video formats found 1>&2 & exit /b 1)\r\necho x> \"%~2\\Live.mp4\"\r\necho FREYDONE^|%~2\\Live.mp4";
         let tool = fake(&dir, script);
         let dest = dir.join("saida");
-        let outcome = run(&tool, URL, &dest, "1080", &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let outcome = run(&tool, URL, &dest, "1080", None, &AtomicBool::new(false), &mut |_| {}).unwrap();
         assert_eq!(outcome.files, vec![dest.join("Live.mp4")]);
     }
 
@@ -333,7 +385,7 @@ mod tests {
         let dir = temp_dir("noretry");
         let count = dir.join("tentativas.txt");
         let tool = fake(&dir, &format!("echo x>> \"{}\"\r\necho ERROR: Private video 1>&2\r\nexit /b 1", count.display()));
-        let result = run(&tool, URL, &dir.join("s"), "1080", &AtomicBool::new(false), &mut |_| {});
+        let result = run(&tool, URL, &dir.join("s"), "1080", None, &AtomicBool::new(false), &mut |_| {});
         assert_eq!(result.unwrap_err(), Error::Message("err.ytPrivate".into()));
         assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
     }
@@ -344,14 +396,14 @@ mod tests {
         let script = "echo %* | findstr /c:\"skip=hls\" >nul && (echo ERROR: usou atalho do YouTube 1>&2 & exit /b 1)\r\necho x> \"%~2\\Post [1].mp4\"\r\necho FREYDONE^|%~2\\Post [1].mp4";
         let tool = fake(&dir, script);
         let dest = dir.join("saida");
-        let outcome = run(&tool, "https://www.tiktok.com/@a/video/1", &dest, "1080", &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let outcome = run(&tool, "https://www.tiktok.com/@a/video/1", &dest, "1080", None, &AtomicBool::new(false), &mut |_| {}).unwrap();
         assert_eq!(outcome.downloaded, 1);
         for url in ["https://x.com/a/status/1", "https://www.instagram.com/reel/a/", "https://vm.tiktok.com/a/"] {
-            let args = build_args(url, Path::new("D:\\p"), "1080", false);
+            let args = build_args(url, Path::new("D:\\p"), "1080", false, None);
             assert!(args.iter().any(|a| a.contains("[%(id)s]")), "{url}");
             assert_eq!(args.last().unwrap(), url);
         }
-        assert!(build_args(URL, Path::new("D:\\p"), "1080", true).iter().any(|a| a == "%(title)s.%(ext)s"));
+        assert!(build_args(URL, Path::new("D:\\p"), "1080", true, None).iter().any(|a| a == "%(title)s.%(ext)s"));
     }
 
     #[test]
@@ -363,8 +415,73 @@ mod tests {
     }
 
     #[test]
-    fn progresso_com_campos_ausentes_e_titulo_com_barra() {
-        let p = parse_progress("FREYPROG|1048576|NA|2097152.0|NA|NA|Título | com barra").unwrap();
+    fn login_so_entra_quando_o_youtube_pede() {
+        let dir = temp_dir("login");
+        let log = dir.join("chamadas.txt");
+        // Recusa sem login; com --cookies-from-browser, baixa.
+        let script = format!(
+            "echo %* >> \"{}\"\r\necho %* | findstr /c:\"--cookies-from-browser\" >nul || (echo ERROR: [youtube] a: Sign in to confirm you're not a bot 1>&2 & exit /b 1)\r\necho x> \"%~2\\Clipe.mp4\"\r\necho FREYDONE^|%~2\\Clipe.mp4",
+            log.display()
+        );
+        let tool = fake(&dir, &script);
+        let firefox = Login::Browser("firefox".into());
+        let outcome = run(&tool, URL, &dir.join("s"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(outcome.downloaded, 1);
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().count(), 2, "primeiro sem a conta, depois com ela");
+        assert!(!calls.lines().next().unwrap().contains("cookies"));
+        assert!(calls.lines().nth(1).unwrap().contains("--cookies-from-browser firefox"));
+    }
+
+    #[test]
+    fn sem_login_ligado_explica_onde_ligar() {
+        let dir = temp_dir("login-off");
+        let tool = fake(&dir, "echo ERROR: [youtube] a: Sign in to confirm you're not a bot 1>&2\r\nexit /b 1");
+        let result = run(&tool, URL, &dir.join("s"), "1080", None, &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(result.unwrap_err(), Error::Message("err.ytLoginOff".into()));
+        let firefox = Login::Browser("firefox".into());
+        let result = run(&tool, URL, &dir.join("s"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(result.unwrap_err(), Error::Message("err.ytLoginRefused".into()), "recusou mesmo com a conta");
+    }
+
+    #[test]
+    fn login_nunca_vai_para_outros_sites_nem_para_quem_nao_pediu() {
+        let dir = temp_dir("login-social");
+        let log = dir.join("chamadas.txt");
+        let tool = fake(&dir, &format!("echo %* >> \"{}\"\r\necho ERROR: [Instagram] a: login required, use --cookies 1>&2\r\nexit /b 1", log.display()));
+        let firefox = Login::Browser("firefox".into());
+        let result = run(&tool, "https://www.instagram.com/reel/a/", &dir.join("s"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(result.unwrap_err(), Error::Message("err.ytLogin".into()));
+        assert!(!std::fs::read_to_string(&log).unwrap().contains("cookies-from-browser"));
+        let ok = fake(&dir, &format!("echo %* >> \"{}\"\r\necho x> \"%~2\\Clipe.mp4\"\r\necho FREYDONE^|%~2\\Clipe.mp4", log.display()));
+        std::fs::remove_file(&log).unwrap();
+        run(&ok, URL, &dir.join("t"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert!(!std::fs::read_to_string(&log).unwrap().contains("cookies"), "video que baixa sem login nunca usa a conta");
+    }
+
+    #[test]
+    fn arquivo_de_login_que_sumiu_nao_e_passado_ao_ytdlp() {
+        let dir = temp_dir("login-file");
+        let tool = fake(&dir, "echo ERROR: [youtube] a: Sign in to confirm you're not a bot 1>&2\r\nexit /b 1");
+        let file = Login::File(dir.join("nao-existe.txt"));
+        let result = run(&tool, URL, &dir.join("s"), "1080", Some(&file), &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(result.unwrap_err(), Error::Message("err.ytCookiesRead".into()));
+    }
+
+    #[test]
+    fn configuracao_do_login() {
+        assert_eq!(Login::from_settings("", "x"), None);
+        assert_eq!(Login::from_settings("file", ""), None, "arquivo ainda nao escolhido");
+        assert_eq!(Login::from_settings("firefox", ""), Some(Login::Browser("firefox".into())));
+        assert_eq!(Login::from_settings("brave", ""), Some(Login::Browser("brave".into())));
+        assert_eq!(Login::from_settings("edge", ""), None, "Edge e Chrome no Windows nao funcionam");
+        assert_eq!(Login::File("C:\\c.txt".into()).args(), ["--cookies".to_string(), "C:\\c.txt".to_string()]);
+        assert_eq!(friendly_error("ERROR: could not find firefox cookies database in C:\\x"), "err.ytCookiesRead");
+        assert_eq!(friendly_error("ERROR: 'c.txt' does not look like a Netscape format cookies file"), "err.ytCookiesRead");
+    }
+
+    #[test]
+    fn progresso_com_campos_ausentes_e_titulo_com_barra() {        let p = parse_progress("FREYPROG|1048576|NA|2097152.0|NA|NA|Título | com barra").unwrap();
         assert_eq!((p.done, p.total, p.files_done, p.files_total), (1048576, Some(2097152), 0, 1));
         assert_eq!(p.file, "Título | com barra");
         let q = parse_progress("FREYPROG|10|100|NA|3|12|x").unwrap();
@@ -386,9 +503,9 @@ mod tests {
 
     #[test]
     fn argumentos_protegem_contra_sobrescrita_e_link_como_opcao() {
-        let args = build_args(URL, Path::new("D:\\p"), "1080", true);
+        let args = build_args(URL, Path::new("D:\\p"), "1080", true, None);
         assert!(args.windows(2).any(|w| w == ["--extractor-args", SKIP_HLS]));
-        assert!(!build_args(URL, Path::new("D:\\p"), "1080", false).iter().any(|a| a == SKIP_HLS));
+        assert!(!build_args(URL, Path::new("D:\\p"), "1080", false, None).iter().any(|a| a == SKIP_HLS));
         assert_eq!(&args[..2], ["-P", "D:\\p"]);
         for needed in ["--no-overwrites", "--continue", "--ignore-config", "--no-playlist", "--no-simulate"] {
             assert!(args.iter().any(|a| a == needed), "{needed}");
@@ -417,7 +534,7 @@ mod tests {
         let tool = fake(&dir, "echo FREYPROG^|50^|100^|NA^|NA^|NA^|Clipe\r\necho x> \"%~2\\Clipe.mp4\"\r\necho FREYDONE^|%~2\\Clipe.mp4");
         let dest = dir.join("saida");
         let mut seen = Vec::new();
-        let outcome = run(&tool, URL, &dest, "1080", &AtomicBool::new(false), &mut |p| seen.push(p.done)).unwrap();
+        let outcome = run(&tool, URL, &dest, "1080", None, &AtomicBool::new(false), &mut |p| seen.push(p.done)).unwrap();
         assert_eq!((outcome.downloaded, outcome.skipped), (1, 0));
         assert_eq!(outcome.files, vec![dest.join("Clipe.mp4")]);
         assert_eq!(seen, vec![50]);
@@ -430,7 +547,7 @@ mod tests {
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("Clipe.mp4"), "original").unwrap();
         let tool = fake(&dir, "echo FREYDONE^|%~2\\Clipe.mp4");
-        let outcome = run(&tool, URL, &dest, "1080", &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let outcome = run(&tool, URL, &dest, "1080", None, &AtomicBool::new(false), &mut |_| {}).unwrap();
         assert_eq!((outcome.downloaded, outcome.skipped), (0, 1));
         assert!(outcome.files.is_empty());
     }
@@ -439,10 +556,10 @@ mod tests {
     fn falha_vira_mensagem_e_sem_arquivo_tambem() {
         let dir = temp_dir("fail");
         let tool = fake(&dir, "echo ERROR: Private video 1>&2\r\nexit /b 1");
-        let result = run(&tool, URL, &dir.join("a"), "1080", &AtomicBool::new(false), &mut |_| {});
+        let result = run(&tool, URL, &dir.join("a"), "1080", None, &AtomicBool::new(false), &mut |_| {});
         assert_eq!(result.unwrap_err(), Error::Message("err.ytPrivate".into()));
         let silent = fake(&dir, "exit /b 0");
-        let result = run(&silent, URL, &dir.join("b"), "1080", &AtomicBool::new(false), &mut |_| {});
+        let result = run(&silent, URL, &dir.join("b"), "1080", None, &AtomicBool::new(false), &mut |_| {});
         assert_eq!(result.unwrap_err(), Error::Message("err.ytNoFile".into()));
     }
 
@@ -452,7 +569,7 @@ mod tests {
         let tool = fake(&dir, "echo FREYPROG^|1^|100^|NA^|NA^|NA^|Clipe\r\nping -n 30 127.0.0.1 > nul\r\necho FREYDONE^|%~2\\nunca.mp4");
         let cancel = AtomicBool::new(false);
         let started = std::time::Instant::now();
-        let result = run(&tool, URL, &dir.join("s"), "1080", &cancel, &mut |_| cancel.store(true, Ordering::Relaxed));
+        let result = run(&tool, URL, &dir.join("s"), "1080", None, &cancel, &mut |_| cancel.store(true, Ordering::Relaxed));
         assert_eq!(result.unwrap_err(), Error::Cancelled);
         assert!(started.elapsed().as_secs() < 15, "nao esperou o processo terminar sozinho");
     }
@@ -460,7 +577,7 @@ mod tests {
     #[test]
     fn sem_o_programa_explica_como_instalar() {
         let dir = temp_dir("missing");
-        let result = run(&dir.join("nao-existe.exe"), URL, &dir, "1080", &AtomicBool::new(false), &mut |_| {});
+        let result = run(&dir.join("nao-existe.exe"), URL, &dir, "1080", None, &AtomicBool::new(false), &mut |_| {});
         assert!(matches!(result, Err(Error::Message(m)) if m.starts_with("err.ytStart")));
         assert_eq!(MISSING, "err.ytMissing");
     }

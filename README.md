@@ -8,7 +8,7 @@ App de Windows que fica na bandeja e abre com um atalho (`Ctrl+Alt+P`): cria a e
 - **Só baixar:** baixa direto para uma pasta, sem criar estrutura.
 - **Modelos de pastas:** crie, duplique e edite os seus.
 - **Google Drive:** arquivos e pastas públicos, com subpastas e retomada de download. Documentos, planilhas e apresentações do Google saem como Word, Excel e PowerPoint.
-- **YouTube:** 1080p e 720p em H.264 MP4, 4K para edição (baixa até 4K e converte para H.264 MP4), melhor qualidade ou só áudio (M4A, MP3, WAV, FLAC ou Opus).
+- **YouTube:** 1080p e 720p em H.264 MP4, 4K para edição (baixa até 4K e converte para H.264 MP4), melhor qualidade ou só áudio (M4A, MP3, WAV, FLAC ou Opus). Login opcional, por sua conta e risco (veja abaixo).
 - **X, Instagram e TikTok:** vídeos de posts públicos, sem usar a sua conta. Alguns posts só abrem com login e não podem ser baixados. Links de perfil não são aceitos.
 - **Conversor:** MP4, MOV, MKV, WEBM, GIF, MP3, WAV, M4A, FLAC e Opus, com GPU quando disponível.
 - **Idiomas:** português, inglês, espanhol, francês, japonês, chinês simplificado, chinês tradicional, russo e árabe.
@@ -29,7 +29,16 @@ Requer Windows 10 ou 11 de 64 bits.
 
 ## Uso responsável
 
-Baixe apenas material seu ou que você tenha permissão para baixar. Os termos do YouTube, do X, do Instagram e do TikTok restringem downloads sem autorização, e os direitos autorais de cada vídeo continuam valendo. O app não usa a sua conta nem baixa vídeos protegidos por DRM.
+Baixe apenas material seu ou que você tenha permissão para baixar. Os termos do YouTube, do X, do Instagram e do TikTok restringem downloads sem autorização, e os direitos autorais de cada vídeo continuam valendo. O app não baixa vídeos protegidos por DRM.
+
+### Login do YouTube: por sua conta e risco
+
+Vem desligado. Em **Configurações**, você pode deixar o app usar o login do Firefox ou um arquivo `cookies.txt` quando o YouTube recusar um vídeo sem login. Antes, é preciso marcar que entende os riscos:
+
+- Usar a conta para baixar vai contra os termos do YouTube, e o Google pode suspender a conta temporária ou permanentemente. **Use uma conta secundária, nunca a principal.**
+- O app sempre tenta primeiro sem login, e só usa a conta em links do YouTube, nunca nos outros sites.
+- No Windows, o login do Chrome e do Edge não funciona: esses navegadores protegem o login contra outros programas. O Brave aparece na lista, mas pode ter a mesma proteção; se não funcionar, use o Firefox ou um `cookies.txt`.
+- O `cookies.txt` dá acesso à sua conta. Exporte numa janela anônima, feche a janela logo depois e não compartilhe o arquivo.
 
 ## Problemas conhecidos
 

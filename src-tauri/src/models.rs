@@ -268,18 +268,24 @@ pub fn default_folder(folders: &[String]) -> String {
     String::new()
 }
 
+/// Os modelos guardam subpastas com "\" ("02 Insert\Logos"). Aqui vira caminho do sistema:
+/// no Mac, juntar o texto direto criaria uma pasta com a barra no nome.
+pub fn rel_path(rel: &str) -> PathBuf {
+    rel.split('\\').filter(|s| !s.is_empty()).collect()
+}
+
 pub fn project_base(plan: &Plan, dest: &Path) -> PathBuf {
-    if plan.root.is_empty() { dest.to_path_buf() } else { dest.join(&plan.root) }
+    if plan.root.is_empty() { dest.to_path_buf() } else { dest.join(rel_path(&plan.root)) }
 }
 
 pub fn create_on_disk(plan: &Plan, dest: &Path) -> std::io::Result<PathBuf> {
     let base = project_base(plan, dest);
     fs::create_dir_all(&base)?;
     for rel in &plan.folders {
-        fs::create_dir_all(base.join(rel))?;
+        fs::create_dir_all(base.join(rel_path(rel)))?;
     }
     for (rel, content) in &plan.files {
-        let full = base.join(rel);
+        let full = base.join(rel_path(rel));
         if let Some(parent) = full.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -437,7 +443,9 @@ mod tests {
         let cfg = parse_config(SAMPLE).unwrap();
         let plan = build_plan(&cfg.templates[0], "Cliente");
         let base = create_on_disk(&plan, &dir).unwrap();
-        assert!(base.join("02 Insert\\Logos").is_dir());
+        assert!(base.join("02 Insert").join("Logos").is_dir());
+        assert_eq!(rel_path("02 Insert\\Logos"), Path::new("02 Insert").join("Logos"));
+        assert_eq!(rel_path(""), PathBuf::new());
         fs::write(base.join("00_briefing.txt"), "editado").unwrap();
         create_on_disk(&plan, &dir).unwrap();
         assert_eq!(fs::read_to_string(base.join("00_briefing.txt")).unwrap(), "editado");

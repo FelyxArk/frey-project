@@ -1,9 +1,9 @@
-﻿# Junta os avisos de licenca de todas as bibliotecas Rust compiladas no app.
-# Uso: Collect-Licenses.ps1 -OutFile licenses\Rust-Libraries.txt
-param([Parameter(Mandatory)][string]$OutFile)
+# Junta os avisos de licenca de todas as bibliotecas Rust compiladas no app.
+# Uso: Collect-Licenses.ps1 -OutFile licenses\Rust-Libraries.txt [-Platform aarch64-apple-darwin]
+param([Parameter(Mandatory)][string]$OutFile, [string]$Platform = 'x86_64-pc-windows-msvc')
 $ErrorActionPreference = 'Stop'
 $manifest = Join-Path $PSScriptRoot '..\src-tauri\Cargo.toml'
-$meta = (& cargo metadata --format-version 1 --manifest-path $manifest --filter-platform x86_64-pc-windows-msvc) -join "`n" | ConvertFrom-Json
+$meta = (& cargo metadata --format-version 1 --manifest-path $manifest --filter-platform $Platform) -join "`n" | ConvertFrom-Json
 if ($LASTEXITCODE) { throw 'cargo metadata falhou' }
 
 # So o que entra no executavel: dependencias normais, a partir do pacote do app.

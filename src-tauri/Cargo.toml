@@ -1,6 +1,6 @@
 [package]
 name = "frey-project"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 publish = false
 description = "Painel de acesso rapido que cria a estrutura do projeto e baixa os links do Google Drive."
@@ -20,6 +20,14 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 ureq = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-autostart = "2"
 
 [features]
 default = ["custom-protocol"]

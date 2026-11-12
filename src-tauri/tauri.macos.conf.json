@@ -1,0 +1,39 @@
+{
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "panel",
+        "create": false,
+        "title": "Frey Project",
+        "width": 640,
+        "height": 300,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "windowEffects": { "effects": ["hudWindow"], "state": "active", "radius": 10 },
+        "resizable": false,
+        "maximizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.icns", "icons/icon.png"],
+    "category": "Productivity",
+    "shortDescription": "Painel de acesso rápido para pastas de projeto e downloads.",
+    "copyright": "Frey Project contributors. MIT.",
+    "externalBin": ["binaries/ffmpeg", "binaries/ffprobe", "binaries/yt-dlp", "binaries/deno"],
+    "resources": { "../packaging/build-macos/NOTICES.txt": "NOTICES.txt", "../packaging/build-macos/licenses/": "licenses/" },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "hardenedRuntime": true,
+      "entitlements": "macos/Entitlements.plist"
+    }
+  }
+}
