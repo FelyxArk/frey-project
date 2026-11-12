@@ -20,12 +20,13 @@
     viewProject: $("viewProject"), viewConvert: $("viewConvert"), viewSettings: $("viewSettings"),
     cFormat: $("cFormat"), cMode: $("cMode"), cQuality: $("cQuality"), cOut: $("cOut"), cGpu: $("cGpu"), cGpuLabel: $("cGpuLabel"), cAdd: $("cAdd"), cRows: $("cRows"),
     sLanguage: $("sLanguage"), sOpenAtEnd: $("sOpenAtEnd"), sDetectLink: $("sDetectLink"), sYtRisk: $("sYtRisk"), sYtLogin: $("sYtLogin"), sYtCookies: $("sYtCookies"), sYtCookiesPath: $("sYtCookiesPath"), sModel: $("sModel"), sNew: $("sNew"), sDuplicate: $("sDuplicate"), sDelete: $("sDelete"),
+    destMore: $("destMore"), recent: $("recent"), recentList: $("recentList"), recentEmpty: $("recentEmpty"),
     sName: $("sName"), sRoot: $("sRoot"), sFolderList: $("sFolderList"), sAddFolder: $("sAddFolder"), sTree: $("sTree"), sRestore: $("sRestore")
   };
   var s = {
     lang: "pt", tab: "project", running: false, projectOpen: false, convertOpen: false, confirmNext: false, broken: false,
     rows: [], files: [], nextId: 1, folders: [], defaultFolder: "", dest: "", outDir: "", requestSeq: 0, settingsSeq: 0, toolsChecked: false, gpu: "detectingGpu",
-    status: "", statusKind: "", root: "", downloadOnly: false, needsName: true, models: [], savedNames: [], modelIndex: 0, saveTimer: null, armed: null
+    status: "", statusKind: "", subfolders: [], subSeq: 0, recent: [], recentOpen: false, root: "", downloadOnly: false, needsName: true, models: [], savedNames: [], modelIndex: 0, saveTimer: null, armed: null
   };
 
   // ---- traducao
@@ -81,7 +82,95 @@
     refreshControls();
     refreshSettingsTree();
     renderYoutubeLogin();
+    renderRecent();
     fit();
+  }
+
+  // ---- destino: lista de caminhos recentes e subpastas da pasta escolhida
+
+  function samePath(a, b) {
+    var norm = function (p) { p = String(p || "").replace(/[\\/]+$/, ""); return s.mac ? p : p.toLowerCase(); };
+    return !!a && norm(a) === norm(b);
+  }
+
+  function svgX() {
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 10 10");
+    svg.setAttribute("aria-hidden", "true");
+    var path = document.createElementNS(ns, "path");
+    path.setAttribute("d", "M2 2l6 6M8 2l-6 6");
+    svg.appendChild(path);
+    return svg;
+  }
+
+  function renderRecent() {
+    var list = s.recent || [];
+    ui.recentList.replaceChildren.apply(ui.recentList, list.map(function (place) {
+      var li = document.createElement("li");
+      li.className = "recent__item";
+      li.setAttribute("role", "option");
+      var current = samePath(place.path, s.dest);
+      li.classList.toggle("is-current", current);
+      li.setAttribute("aria-selected", String(current));
+      var pick = document.createElement("button");
+      pick.type = "button";
+      pick.className = "recent__path";
+      pick.title = place.path;
+      var text = document.createElement("span");
+      text.textContent = shownPath(place.path);
+      pick.appendChild(text);
+      pick.addEventListener("click", function () { chooseRecent(place.path); });
+      var forget = document.createElement("button");
+      forget.type = "button";
+      forget.className = "recent__forget";
+      forget.title = t("recentRemove");
+      forget.setAttribute("aria-label", t("recentRemove"));
+      forget.appendChild(svgX());
+      forget.addEventListener("click", function () {
+        invoke("forget_path", { path: place.path }).then(function (left) { s.recent = left; renderRecent(); fit(); });
+      });
+      li.appendChild(pick);
+      li.appendChild(forget);
+      return li;
+    }));
+    ui.recentEmpty.hidden = list.length > 0;
+  }
+
+  function toggleRecent(open) {
+    s.recentOpen = open;
+    ui.recent.hidden = !open;
+    ui.destMore.setAttribute("aria-expanded", String(open));
+    if (open) invoke("recent_paths").then(function (list) { s.recent = list; renderRecent(); fit(); });
+    fit();
+  }
+
+  function chooseRecent(path) {
+    setDest(path);
+    clearConfirm();
+    toggleRecent(false);
+    focusProject();
+  }
+
+  // So baixar: as subpastas da pasta escolhida viram opcoes no menu de cada link.
+  function refreshSubfolders() {
+    var seq = ++s.subSeq;
+    if (!s.dest) { applySubfolders([]); return; }
+    invoke("list_subfolders", { path: s.dest }).then(function (list) { if (seq === s.subSeq) applySubfolders(list); });
+  }
+
+  function applySubfolders(list) {
+    var same = s.subfolders && s.subfolders.join("\n") === list.join("\n");
+    s.subfolders = list;
+    ui.viewProject.classList.toggle("no-subfolders", !list.length);
+    if (!same) renderRows();
+  }
+
+  function subfolderOptions(select, value) {
+    while (select.firstChild) select.removeChild(select.firstChild);
+    addOption(select, "", t("chosenFolder"));
+    s.subfolders.forEach(function (name) { addOption(select, name, name); });
+    select.value = value;
   }
 
   // ---- login do YouTube: desligado por padrao; so liga depois de aceitar o risco
@@ -123,7 +212,15 @@
   // ---- geral
 
   function fit() {
-    invoke("resize_panel", { height: Math.ceil(ui.shell.getBoundingClientRect().height) });
+    ui.shell.style.minHeight = "";
+    var top = ui.shell.getBoundingClientRect().top;
+    var height = ui.shell.getBoundingClientRect().height;
+    // A lista de recentes fica por cima do resto: o painel cresce ate ela caber.
+    if (!ui.recent.hidden) {
+      var need = ui.recent.getBoundingClientRect().bottom - top + 12;
+      if (need > height) { height = need; ui.shell.style.minHeight = need + "px"; }
+    }
+    invoke("resize_panel", { height: Math.ceil(height) });
   }
 
   function renderStatus() {
@@ -143,6 +240,8 @@
     ui.dest.textContent = s.dest || t("pickFolder");
     ui.dest.title = s.dest;
     ui.dest.classList.toggle("is-empty", !s.dest);
+    if (s.recentOpen) renderRecent();
+    refreshSubfolders();
   }
 
   function refreshControls() {
@@ -164,7 +263,8 @@
     ui.actions.hidden = s.tab === "settings" && !s.running;
     // Modelos com erro so travam o que depende deles: baixar continua possivel.
     [ui.name, ui.model].forEach(function (n) { n.disabled = s.running || s.broken; });
-    [ui.dest, ui.links, ui.convertTo, ui.modeCreate, ui.modeDownload].forEach(function (n) { n.disabled = s.running; });
+    if (s.running && s.recentOpen) toggleRecent(false);
+    [ui.dest, ui.destMore, ui.links, ui.convertTo, ui.modeCreate, ui.modeDownload].forEach(function (n) { n.disabled = s.running; });
     [ui.cFormat, ui.cMode, ui.cQuality, ui.cOut, ui.cAdd].forEach(function (n) { n.disabled = s.running; });
     if (!s.running) syncModeControl();
     [ui.sModel, ui.sNew, ui.sDuplicate, ui.sName, ui.sRoot, ui.sAddFolder, ui.sOpenAtEnd].forEach(function (n) { n.disabled = s.broken; });
@@ -195,6 +295,7 @@
     s.downloadOnly = value;
     s.confirmNext = false;
     if (s.status === "err.nameNeeded" || s.status === "err.noLinks") setStatus("");
+    renderRows();
     applyMode();
     focusProject();
     invoke("set_download_only", { downloadOnly: value });
@@ -313,7 +414,10 @@
   function renderLink(row) {
     if (!row.node) {
       var select = document.createElement("select");
-      select.addEventListener("change", function () { row.folder = select.value; row.folderChosen = true; });
+      select.addEventListener("change", function () {
+        if (s.downloadOnly) row.sub = select.value;
+        else { row.folder = select.value; row.folderChosen = true; }
+      });
       var selects = [select];
       if (VIDEO_KINDS[row.kind]) {
         var quality = document.createElement("select");
@@ -336,7 +440,10 @@
       if (!row.folderChosen && row.state === "pending") row.folder = s.defaultFolder;
       if (s.folders.indexOf(row.folder) < 0 && row.folder !== "") row.folder = s.defaultFolder;
       renderLink(row);
-      folderOptions(row.node.folder, row.folder);
+      if (s.downloadOnly) {
+        if (s.subfolders.indexOf(row.sub) < 0) row.sub = "";
+        subfolderOptions(row.node.folder, row.sub || "");
+      } else folderOptions(row.node.folder, row.folder);
       row.node.folder.setAttribute("aria-label", t("downloadTo"));
       if (row.qualitySelect) qualityOptions(row.qualitySelect, row.quality, row.kind);
     });
@@ -409,7 +516,7 @@
     var undo = beginRun(pending, renderLink);
     invoke("start_job", { request: {
       model: ui.model.value, name: ui.name.value, dest: s.dest, confirmExisting: confirmExisting, convertTo: ui.convertTo.value, downloadOnly: s.downloadOnly,
-      items: pending.map(function (r) { return { id: r.id, url: r.url, kind: r.kind, folder: r.folder, quality: r.quality }; })
+      items: pending.map(function (r) { return { id: r.id, url: r.url, kind: r.kind, folder: s.downloadOnly ? (r.sub || "") : r.folder, quality: r.quality }; })
     } }).then(function (answer) {
       if (answer.status === "needs_confirm") {
         undo();
@@ -803,6 +910,11 @@
       if (path) { setDest(path); clearConfirm(); }
     });
   });
+  ui.destMore.addEventListener("click", function () { toggleRecent(!s.recentOpen); });
+  // Clique fora da lista fecha a lista.
+  document.addEventListener("mousedown", function (e) {
+    if (s.recentOpen && !ui.recent.contains(e.target) && !ui.destMore.contains(e.target)) toggleRecent(false);
+  });
   ui.cOut.addEventListener("click", function () {
     invoke("pick_out_dir").then(function (path) {
       s.outDir = path || "";
@@ -915,6 +1027,7 @@
   });
 
   document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && s.recentOpen) { toggleRecent(false); ui.destMore.focus(); return; }
     if (e.key === "Escape") { invoke("hide_panel"); return; }
     if (e.key === "Enter" && !ui.go.disabled && (e.target === ui.name || e.target === ui.links)) ui.go.click();
   });
@@ -953,6 +1066,7 @@
   }
 
   listen("panel-shown", function () {
+    refreshSubfolders();
     focusProject();
     takeCopiedLinks();
     fit();

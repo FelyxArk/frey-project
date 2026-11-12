@@ -91,7 +91,6 @@ button { cursor: pointer; }
 .mode button:hover:not(:disabled) { background: var(--fk-raised); color: var(--fk-text); }
 .mode button[aria-checked="true"] { border-color: var(--fk-gold); background: var(--fk-selection); color: var(--fk-text); }
 .mode button:disabled { opacity: .5; cursor: default; }
-.download-only .row select:not(.row__quality) { display: none; }
 .query { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--fk-surface); border-top: 1px solid var(--fk-border); }
 .query svg { flex: none; width: 18px; height: 18px; color: var(--fk-muted); fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
 .query input { min-width: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; font-size: 16px; caret-color: var(--fk-focus); }
@@ -146,3 +145,28 @@ button { cursor: pointer; }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn--primary { border-color: var(--fk-gold); background: var(--fk-gold); color: var(--fk-gold-ink); font-weight: 600; text-shadow: none; }
 .btn--primary:hover:not(:disabled) { border-color: var(--fk-focus); background: var(--fk-focus); }
+
+/* Destino: botao de atalhos ao lado do caminho e a lista de recentes e da pasta dedicada. */
+.dest { display: flex; min-width: 0; }
+.dest .path { flex: 1; min-width: 0; border-start-end-radius: 0; border-end-end-radius: 0; }
+.dest__more { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--fk-border); border-inline-start: 0; border-start-end-radius: var(--fk-radius); border-end-end-radius: var(--fk-radius); background: var(--fk-field); color: var(--fk-muted); }
+.dest__more:hover:not(:disabled), .dest__more[aria-expanded="true"] { background: var(--fk-raised); color: var(--fk-text); }
+.dest__more[aria-expanded="true"] svg { transform: rotate(180deg); }
+.dest__more:disabled { opacity: .5; cursor: default; }
+.dest__more svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.dest { position: relative; }
+/* Lista de recentes: desce do campo, por cima do resto, como a de um gerenciador de downloads. */
+.recent { position: absolute; z-index: 5; top: calc(100% + 4px); inset-inline-start: 0; width: calc(100% + 144px); max-width: calc(100vw - 24px); padding: 4px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: #1f2227; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+.recent__list { list-style: none; margin: 0; padding: 0; max-height: 236px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--fk-border) transparent; }
+.recent__list:empty { display: none; }
+.recent__item { display: flex; align-items: center; border-radius: 6px; }
+.recent__item:hover, .recent__item.is-current { background: var(--fk-raised); }
+.recent__item.is-current .recent__path { color: var(--fk-text); }
+.recent__path { flex: 1; min-width: 0; height: 32px; padding: 0 8px; border: 0; background: transparent; color: var(--fk-text); font-size: 13px; text-align: start; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; }
+.recent__path span { unicode-bidi: plaintext; }
+.recent__forget { flex: none; display: grid; place-items: center; width: 28px; height: 28px; margin-inline-end: 2px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--fk-muted); }
+.recent__forget:hover { background: var(--fk-danger-bg); color: var(--fk-danger); }
+.recent__forget svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.recent__empty { margin: 0; padding: 6px 8px; color: var(--fk-muted); font-size: 12px; }
+/* So baixar: o menu de pasta de cada link so aparece se a pasta escolhida tiver subpastas. */
+.download-only.no-subfolders .row select:not(.row__quality) { display: none; }

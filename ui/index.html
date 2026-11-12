@@ -22,7 +22,7 @@
       </span>
     </header>
 
-    <div id="viewProject" role="tabpanel" aria-labelledby="tabProject">
+    <div id="viewProject" class="no-subfolders" role="tabpanel" aria-labelledby="tabProject">
       <div class="mode" role="radiogroup">
         <button id="modeCreate" type="button" role="radio" aria-checked="true" data-i18n="modeCreateFolders"></button>
         <button id="modeDownload" type="button" role="radio" aria-checked="false" data-i18n="modeDownloadOnly"></button>
@@ -39,7 +39,16 @@
         </label>
         <div class="field field--grow">
           <span id="destLabel" data-i18n="destLabel"></span>
-          <button id="dest" class="path" type="button" aria-labelledby="destLabel"></button>
+          <span class="dest">
+            <button id="dest" class="path" type="button" aria-labelledby="destLabel"></button>
+            <button id="destMore" class="dest__more" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="recent" data-i18n-title="placesToggle" data-i18n-aria="placesToggle">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+            </button>
+            <div class="recent" id="recent" hidden>
+              <ul class="recent__list" id="recentList" role="listbox" data-i18n-aria="placesToggle"></ul>
+              <p class="recent__empty" id="recentEmpty" data-i18n="recentEmpty"></p>
+            </div>
+          </span>
         </div>
         <label class="field field--small">
           <span data-i18n="afterDownload"></span>

@@ -8,6 +8,7 @@ mod drive;
 mod i18n;
 mod models;
 mod outside_click;
+mod places;
 mod platform;
 mod youtube;
 
@@ -56,6 +57,9 @@ struct Settings {
     /// O usuario marcou que entende o risco para a conta. Sem isso o login fica desligado.
     #[serde(default)]
     youtube_risco_aceito: bool,
+    /// Ultimos destinos usados, do mais novo para o mais antigo.
+    #[serde(default)]
+    historico: Vec<String>,
 }
 
 fn youtube_login(app: &AppHandle) -> Option<youtube::Login> {
@@ -339,6 +343,28 @@ fn pick_folder(app: AppHandle, state: State<'_, Shared>, current: String) -> Opt
     picked.and_then(|p| p.into_path().ok()).map(|p| p.display().to_string())
 }
 
+#[tauri::command]
+fn recent_paths(state: State<Shared>) -> Vec<places::Place> {
+    places::recent(&state.settings.lock().unwrap().historico)
+}
+
+#[tauri::command]
+fn forget_path(app: AppHandle, state: State<Shared>, path: String) -> Vec<places::Place> {
+    let mut settings = state.settings.lock().unwrap();
+    places::forget(&mut settings.historico, &path);
+    save_settings(&app, &settings);
+    places::recent(&settings.historico)
+}
+
+/// Subpastas da pasta escolhida no modo So baixar: cada link pode ir para uma delas.
+#[tauri::command(async)]
+fn list_subfolders(path: String) -> Vec<String> {
+    if path.trim().is_empty() {
+        return Vec::new();
+    }
+    places::subfolders(Path::new(path.trim())).into_iter().map(|p| p.name).collect()
+}
+
 #[derive(Deserialize)]
 struct JobItem {
     id: u32,
@@ -442,6 +468,7 @@ fn start_job(app: AppHandle, state: State<Shared>, request: StartRequest) -> Res
         let mut settings = state.settings.lock().unwrap();
         settings.modelo = request.model.clone();
         settings.destino = dest.display().to_string();
+        places::remember(&mut settings.historico, &dest.display().to_string());
         save_settings(&app, &settings);
     }
 
@@ -484,13 +511,26 @@ fn start_download_only(app: AppHandle, state: State<Shared>, request: StartReque
     {
         let mut settings = state.settings.lock().unwrap();
         settings.destino = dest.display().to_string();
+        places::remember(&mut settings.historico, &dest.display().to_string());
         save_settings(&app, &settings);
     }
     // Modelos com erro nao impedem baixar: nesse caso vale abrir a pasta ao terminar.
     let open_at_end = models::load_config(&config_path(&app)).map(|c| c.open_at_end).unwrap_or(true);
     let cancel = Arc::new(AtomicBool::new(false));
     *state.cancel.lock().unwrap() = Some(cancel.clone());
-    let items: Vec<JobItem> = request.items.into_iter().map(|item| JobItem { folder: String::new(), ..item }).collect();
+    // Cada link pode ir para uma subpasta direta da pasta escolhida; nada e criado aqui.
+    let mut items = Vec::with_capacity(request.items.len());
+    for item in request.items {
+        let folder = if item.folder.is_empty() {
+            String::new()
+        } else {
+            match places::subfolder(&dest, &item.folder) {
+                Some(_) => item.folder.clone(),
+                None => return Err(i18n::code("err.subfolderGone", &[&item.folder])),
+            }
+        };
+        items.push(JobItem { folder, ..item });
+    }
     let base = dest.clone();
     let convert_to = request.convert_to;
     let worker_app = app.clone();
@@ -1123,7 +1163,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             boot, preview, parse_links, pick_folder, start_job, cancel_job, open_project, hide_panel, resize_panel,
             convert_tools, only_files, is_folder, pick_files, pick_out_dir, start_convert, open_converted,
-            get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link, set_youtube_login, pick_cookies_file
+            get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link, set_youtube_login, pick_cookies_file,
+            recent_paths, forget_path, list_subfolders
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
