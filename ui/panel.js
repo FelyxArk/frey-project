@@ -968,7 +968,7 @@
     addFolderAfter(m, m.folders.length - 1);
   });
   ui.sNew.addEventListener("click", function () {
-    s.models.push({ name: uniqueName(t("newModel")), root: "{data}_{nome}", folders: [], destination: "", files: [] });
+    s.models.push({ name: uniqueName(t("newModel")), root: "{nome}", folders: [], destination: "", files: [] });
     selectModel(s.models.length - 1);
     persist();
     ui.sName.focus();

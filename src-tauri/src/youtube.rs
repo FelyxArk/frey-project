@@ -1,7 +1,7 @@
 //! Download de YouTube, X, Instagram e TikTok pelo yt-dlp instalado no PATH.
 //! Esses sites mudam com frequencia; quem acompanha isso e o yt-dlp, nao este app.
 //! Nunca sobrescreve (--no-overwrites) e retoma parciais. So usa a conta do usuario se ele ligar
-//! o login do YouTube nas Configuracoes, e mesmo assim so quando o YouTube recusa sem login.
+//! o login nas Configuracoes, so no YouTube e no Instagram, e so quando o site recusa sem login.
 
 use crate::convert::find_tool;
 use crate::drive::{Error, Outcome, Progress};
@@ -50,6 +50,17 @@ pub fn handles(kind: &str) -> bool {
 
 fn is_youtube(url: &str) -> bool {
     url.contains("youtube.com/") || url.contains("youtu.be/")
+}
+
+/// Sites onde o login opcional pode entrar, com as mensagens de cada um. X e TikTok nunca usam a conta.
+fn login_site(url: &str) -> Option<(&'static str, &'static str)> {
+    if is_youtube(url) {
+        Some(("err.ytLoginOff", "err.ytLoginRefused"))
+    } else if url.contains("instagram.com/") {
+        Some(("err.igLoginOff", "err.igLoginRefused"))
+    } else {
+        None
+    }
 }
 
 /// Nas redes sociais o titulo pode ser um texto longo ou se repetir ("Video by autor").
@@ -205,15 +216,16 @@ pub fn download(url: &str, dest: &Path, quality: &str, login: Option<&Login>, ca
 
 const LOGIN_ASKED: &str = "err.ytLogin";
 
-/// Sempre tenta sem a conta. So se o YouTube recusar por falta de login, e o usuario tiver ligado
-/// o login, tenta de novo com ele: a conta so e usada quando nao ha outro jeito.
+/// Sempre tenta sem a conta. So se o YouTube ou o Instagram recusar por falta de login, e o usuario
+/// tiver ligado o login, tenta de novo com ele: a conta so e usada quando nao ha outro jeito.
 fn run(tool: &Path, url: &str, dest: &Path, quality: &str, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
     let first = run_once(tool, url, dest, quality, None, cancel, on_progress);
-    if !matches!(&first, Err(Error::Message(m)) if m == LOGIN_ASKED) || !is_youtube(url) {
+    let Some((off, refused)) = login_site(url) else { return first };
+    if !matches!(&first, Err(Error::Message(m)) if m == LOGIN_ASKED) {
         return first;
     }
     let Some(login) = login else {
-        return Err(Error::Message("err.ytLoginOff".into()));
+        return Err(Error::Message(off.into()));
     };
     if let Login::File(path) = login {
         if !path.is_file() {
@@ -221,7 +233,7 @@ fn run(tool: &Path, url: &str, dest: &Path, quality: &str, login: Option<&Login>
         }
     }
     match run_once(tool, url, dest, quality, Some(login), cancel, on_progress) {
-        Err(Error::Message(m)) if m == LOGIN_ASKED => Err(Error::Message("err.ytLoginRefused".into())),
+        Err(Error::Message(m)) if m == LOGIN_ASKED => Err(Error::Message(refused.into())),
         other => other,
     }
 }
@@ -445,17 +457,47 @@ mod tests {
     }
 
     #[test]
-    fn login_nunca_vai_para_outros_sites_nem_para_quem_nao_pediu() {
+    fn login_tambem_vale_no_instagram_e_so_quando_ele_pede() {
+        let dir = temp_dir("login-ig");
+        let log = dir.join("chamadas.txt");
+        // Mensagem real do yt-dlp quando o Instagram esconde o post de quem nao esta logado.
+        let script = format!(
+            "echo %* >> \"{}\"\r\necho %* | findstr /c:\"--cookies-from-browser\" >nul || (echo ERROR: [Instagram] a: Instagram sent an empty media response. Check if this post is accessible in your browser without being logged-in. If it is not, then use --cookies-from-browser or --cookies for the authentication. 1>&2 & exit /b 1)\r\necho x> \"%~2\\Reel [a].mp4\"\r\necho FREYDONE^|%~2\\Reel [a].mp4",
+            log.display()
+        );
+        let tool = fake(&dir, &script);
+        let reel = "https://www.instagram.com/reel/a/";
+        let off = run(&tool, reel, &dir.join("s"), "1080", None, &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(off.unwrap_err(), Error::Message("err.igLoginOff".into()));
+        std::fs::remove_file(&log).unwrap();
+        let firefox = Login::Browser("firefox".into());
+        let outcome = run(&tool, reel, &dir.join("s"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(outcome.downloaded, 1);
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().count(), 2, "primeiro sem a conta, depois com ela");
+        assert!(!calls.lines().next().unwrap().contains("cookies-from-browser"));
+        assert!(calls.lines().nth(1).unwrap().contains("--cookies-from-browser firefox"));
+        let refuses = fake(&dir, "echo ERROR: [Instagram] a: Instagram sent an empty media response. use --cookies 1>&2\r\nexit /b 1");
+        let result = run(&refuses, reel, &dir.join("s"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(result.unwrap_err(), Error::Message("err.igLoginRefused".into()), "recusou mesmo com a conta");
+    }
+
+    #[test]
+    fn login_nunca_vai_para_x_e_tiktok_nem_para_quem_nao_pediu() {
         let dir = temp_dir("login-social");
         let log = dir.join("chamadas.txt");
-        let tool = fake(&dir, &format!("echo %* >> \"{}\"\r\necho ERROR: [Instagram] a: login required, use --cookies 1>&2\r\nexit /b 1", log.display()));
+        let tool = fake(&dir, &format!("echo %* >> \"{}\"\r\necho ERROR: [twitter] a: login required, use --cookies 1>&2\r\nexit /b 1", log.display()));
         let firefox = Login::Browser("firefox".into());
-        let result = run(&tool, "https://www.instagram.com/reel/a/", &dir.join("s"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {});
-        assert_eq!(result.unwrap_err(), Error::Message("err.ytLogin".into()));
+        for url in ["https://x.com/a/status/1", "https://www.tiktok.com/@a/video/1"] {
+            let result = run(&tool, url, &dir.join("s"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {});
+            assert_eq!(result.unwrap_err(), Error::Message("err.ytLogin".into()), "{url}");
+        }
         assert!(!std::fs::read_to_string(&log).unwrap().contains("cookies-from-browser"));
         let ok = fake(&dir, &format!("echo %* >> \"{}\"\r\necho x> \"%~2\\Clipe.mp4\"\r\necho FREYDONE^|%~2\\Clipe.mp4", log.display()));
         std::fs::remove_file(&log).unwrap();
-        run(&ok, URL, &dir.join("t"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {}).unwrap();
+        for url in [URL, "https://www.instagram.com/reel/a/"] {
+            run(&ok, url, &dir.join("t"), "1080", Some(&firefox), &AtomicBool::new(false), &mut |_| {}).unwrap();
+        }
         assert!(!std::fs::read_to_string(&log).unwrap().contains("cookies"), "video que baixa sem login nunca usa a conta");
     }
 

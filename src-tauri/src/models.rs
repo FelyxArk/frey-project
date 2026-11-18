@@ -96,7 +96,7 @@ pub const DEFAULT_MODEL: &str = "Comissões";
 pub fn default_template() -> Template {
     Template {
         name: DEFAULT_MODEL.into(),
-        root: "{data}_{nome}".into(),
+        root: "{nome}".into(),
         folders: ["01 Footage", "02 Insert", "03 Projetos", "04 Render", "05 SFX", "06 Musicas", "07 Legendas"].map(String::from).to_vec(),
         destination: "01 Footage".into(),
         files: Vec::new(),
@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(cfg.templates.len(), 1);
         let t = &cfg.templates[0];
         assert_eq!(t.name, DEFAULT_MODEL);
-        assert_eq!(t.root, "{data}_{nome}");
+        assert_eq!(t.root, "{nome}");
         assert_eq!(t.folders, ["01 Footage", "02 Insert", "03 Projetos", "04 Render", "05 SFX", "06 Musicas", "07 Legendas"]);
     }
 
