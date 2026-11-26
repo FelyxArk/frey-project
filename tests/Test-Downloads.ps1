@@ -36,7 +36,7 @@ function Eval([string]$expr) {
 function Status { Eval 'document.getElementById("status").textContent' }
 function Busy { (Eval 'document.getElementById("go").disabled') -eq $true }
 function Go { [void](Eval 'document.getElementById("go").click()') }
-function ClearRows { [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 200 }
+function ClearRows { [void](Eval '[...document.querySelectorAll("#rows .card__remove")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 200 }
 function AddLink([string]$link) {
   [void](Eval "(async()=>{const d=new DataTransfer();d.setData('text',$(ConvertTo-Json $link));document.getElementById('links').dispatchEvent(new ClipboardEvent('paste',{clipboardData:d,bubbles:true,cancelable:true}));})()")
   Start-Sleep -Milliseconds 500

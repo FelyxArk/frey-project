@@ -104,7 +104,7 @@ try {
   $panelHwnd = PanelWindow; $panelVisible = [WinCheck]::IsWindowVisible($panelHwnd); $panelFocused = [WinCheck]::GetForegroundWindow() -eq $panelHwnd
   Check "iniciado com --hidden nao mostra o painel nem pega o foco (janela=$panelHwnd visivel=$panelVisible foco=$panelFocused)" (($panelHwnd -ne [IntPtr]::Zero) -and (-not $panelVisible) -and (-not $panelFocused))
   Check 'nome da pasta vem vazio, pedindo para digitar' ((Value 'name') -eq '' -and (Eval 'document.getElementById("name").placeholder') -eq 'Nome da pasta do projeto')
-  Check 'Criar pastas e o modo inicial' ((Eval 'document.getElementById("modeCreate").getAttribute("aria-checked")') -eq 'true')
+  Check 'Criar pastas e o modo inicial' ((Eval 'document.getElementById("createFolders").checked') -eq $true)
   Click 'go'
   Check 'sem nome o projeto nao e criado' ((Text 'status') -match 'nome ao projeto' -and @(Get-ChildItem -LiteralPath $dest -Force).Count -eq 0)
   Check 'o cursor vai para o campo de nome' ((Eval 'document.activeElement.id') -eq 'name')
@@ -171,14 +171,14 @@ try {
   # Link colado cai na pasta marcada do modelo; escolha no link vence depois disso.
   [void](Send 'Input.insertText' @{ text = '' })
   [void](Eval '(async()=>{const d=new DataTransfer();d.setData("text","https://drive.google.com/file/d/IdInventadoDoFreyProjectDest00/view");document.getElementById("links").dispatchEvent(new ClipboardEvent("paste",{clipboardData:d,bubbles:true,cancelable:true}));})()'); Start-Sleep -Milliseconds 600
-  Check 'link novo entra na pasta marcada' ((Eval 'document.querySelector("#rows select").value') -eq 'B 02\Sub')
+  Check 'link novo entra na pasta marcada' ((Eval 'document.querySelector("#rows select.card__folder").value') -eq 'B 02\Sub')
   Choose 'model' 'Comissões'
-  Check 'trocar de modelo leva o link ao destino do outro' ((Eval 'document.querySelector("#rows select").value') -eq '01 Footage')
+  Check 'trocar de modelo leva o link ao destino do outro' ((Eval 'document.querySelector("#rows select.card__folder").value') -eq '01 Footage')
   Choose 'model' 'Meu Teste Ação'
-  [void](Eval 'var e=document.querySelector("#rows select"); e.value="C 03"; e.dispatchEvent(new Event("change",{bubbles:true}));'); Start-Sleep -Milliseconds 200
+  [void](Eval 'var e=document.querySelector("#rows select.card__folder"); e.value="C 03"; e.dispatchEvent(new Event("change",{bubbles:true}));'); Start-Sleep -Milliseconds 200
   Click 'tabSettings'; MarkFolder 0; Click 'tabProject'; Start-Sleep -Milliseconds 400
-  Check 'escolha manual no link nao e trocada' ((Eval 'document.querySelector("#rows select").value') -eq 'C 03')
-  [void](Eval 'document.querySelector("#rows .row button").click()'); Start-Sleep -Milliseconds 300
+  Check 'escolha manual no link nao e trocada' ((Eval 'document.querySelector("#rows select.card__folder").value') -eq 'C 03')
+  [void](Eval 'document.querySelector("#rows .card__remove").click()'); Start-Sleep -Milliseconds 300
   Click 'go'; Start-Sleep -Milliseconds 700
   Check 'projeto criado com o modelo novo' ((Test-Path -LiteralPath "$dest\Novo Projeto\A 01") -and (Test-Path -LiteralPath "$dest\Novo Projeto\B 02\Sub") -and (Test-Path -LiteralPath "$dest\Novo Projeto\C 03"))
   Check 'nada do modelo antigo' (-not (Test-Path -LiteralPath "$dest\Novo Projeto\01 Footage"))
@@ -197,7 +197,7 @@ try {
 
   # So baixar: sem estrutura. O download real so roda com FREY_TEST_DRIVE_FILE: link publico de um arquivo pequeno.
   $before = @(Get-ChildItem -LiteralPath $dest -Directory | ForEach-Object Name) -join '|'
-  Click 'modeDownload'; Start-Sleep -Milliseconds 300
+  [void](Eval 'var t=document.getElementById("createFolders"); t.checked=false; t.dispatchEvent(new Event("change")); 1'); Start-Sleep -Milliseconds 300
   Check 'So baixar esconde nome, modelo e estrutura' ((Eval '["queryRow","fieldModel","tree"].every(i=>document.getElementById(i).hidden)') -eq $true)
   Check 'So baixar deixa o botao Baixar' ((Text 'go') -eq 'Baixar')
   Check 'So baixar troca o rotulo do destino' ((Text 'destLabel') -eq 'Salvar em')
@@ -206,7 +206,7 @@ try {
   Check 'So baixar sem link pede um link' ((Text 'status') -match 'pelo menos um link')
   $driveFile = if ($env:FREY_TEST_DRIVE_FILE) { $env:FREY_TEST_DRIVE_FILE } else { 'https://drive.google.com/file/d/IdInventadoDoFreyProjectTeste000/view' }
   [void](Eval "(async()=>{const d=new DataTransfer();d.setData('text',$(ConvertTo-Json $driveFile));document.getElementById('links').dispatchEvent(new ClipboardEvent('paste',{clipboardData:d,bubbles:true,cancelable:true}));})()"); Start-Sleep -Milliseconds 500
-  Check 'linha do link nao mostra pasta do modelo' ((Eval 'getComputedStyle(document.querySelector("#rows select")).display') -eq 'none')
+  Check 'linha do link nao mostra pasta do modelo' ((Eval 'getComputedStyle(document.querySelector("#rows select.card__folder")).display') -eq 'none')
   Shot '4c-so-baixar'
   Click 'go'
   foreach ($i in 1..60) { Start-Sleep -Milliseconds 500; if ((Eval 'document.getElementById("go").disabled') -eq $false) { break } }
@@ -225,8 +225,8 @@ try {
     Click 'go'; Start-Sleep -Milliseconds 300
     Check 'clicar de novo sem nada pendente nao baixa duas vezes' (@(Get-ChildItem -LiteralPath $dest -File).Count -eq 1)
   }
-  [void](Eval 'document.querySelector("#rows .row button").click()'); Start-Sleep -Milliseconds 300
-  Click 'modeCreate'; Start-Sleep -Milliseconds 300
+  [void](Eval 'document.querySelector("#rows .card__remove").click()'); Start-Sleep -Milliseconds 300
+  [void](Eval 'var t=document.getElementById("createFolders"); t.checked=true; t.dispatchEvent(new Event("change")); 1'); Start-Sleep -Milliseconds 300
   Check 'voltar a Criar pastas mostra o nome' ((Eval 'document.getElementById("queryRow").hidden') -eq $false -and (Eval 'document.activeElement.id') -eq 'name')
 
   Click 'tabSettings'

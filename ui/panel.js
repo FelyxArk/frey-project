@@ -7,7 +7,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var LANGUAGES = [["pt", "Português", "pt-BR"], ["en", "English", "en"], ["es", "Español", "es"], ["fr", "Français", "fr"], ["ja", "日本語", "ja"], ["zh", "简体中文", "zh-Hans"], ["zht", "繁體中文", "zh-Hant"], ["ru", "Русский", "ru"], ["ar", "العربية", "ar"]];
   var FORMATS = [["mp4", "MP4", "fmtVideo"], ["mov", "MOV", "fmtVideo"], ["mkv", "MKV", "fmtVideo"], ["webm", "WEBM", "fmtVideo"], ["gif", "GIF", "fmtAnimated"], ["mp3", "MP3", "fmtAudio"], ["wav", "WAV", "fmtAudio"], ["m4a", "M4A", "fmtAudio"], ["flac", "FLAC", "fmtAudio"], ["opus", "Opus", "fmtAudio"]];
-  var QUALITIES = [["1080", "q1080"], ["720", "q720"], ["edit4k", "qEdit4k"], ["best", "qBest"], ["audio", "qAudioFmt", "M4A"], ["audio-mp3", "qAudioFmt", "MP3"], ["audio-wav", "qAudioFmt", "WAV"], ["audio-flac", "qAudioFmt", "FLAC"], ["audio-opus", "qAudioFmt", "Opus"]];
+  var QUALITIES = [["1080", "q1080"], ["720", "q720"], ["2160", "q2160"], ["1440", "q1440"], ["edit4k", "qEdit4k"], ["best", "qBest"], ["audio", "qAudioFmt", "M4A"], ["audio-mp3", "qAudioFmt", "MP3"], ["audio-wav", "qAudioFmt", "WAV"], ["audio-flac", "qAudioFmt", "FLAC"], ["audio-opus", "qAudioFmt", "Opus"]];
   var VIDEO_KINDS = { youtube: "kindYoutube", x: "kindX", instagram: "kindInstagram", tiktok: "kindTiktok" };
   var SEP = "\u001f";
 
@@ -15,15 +15,18 @@
     shell: $("shell"), name: $("name"), model: $("model"), dest: $("dest"), tree: $("tree"), links: $("links"),
     rows: $("rows"), status: $("status"), go: $("go"), cancel: $("cancel"), open: $("open"), hide: $("hide"), actions: $("actions"),
     track: $("progressTrack"), bar: $("progressBar"), hotkey: $("hotkey"), convertTo: $("convertTo"),
-    modeCreate: $("modeCreate"), modeDownload: $("modeDownload"), queryRow: $("queryRow"), fieldModel: $("fieldModel"), destLabel: $("destLabel"),
-    tabProject: $("tabProject"), tabConvert: $("tabConvert"), tabSettings: $("tabSettings"),
-    viewProject: $("viewProject"), viewConvert: $("viewConvert"), viewSettings: $("viewSettings"),
+    createFolders: $("createFolders"), createFoldersHint: $("createFoldersHint"), quick: $("quick"), queryRow: $("queryRow"), fieldModel: $("fieldModel"), destLabel: $("destLabel"),
+    tabProject: $("tabProject"), tabDownloads: $("tabDownloads"), tabConvert: $("tabConvert"), tabSettings: $("tabSettings"),
+    viewProject: $("viewProject"), viewDownloads: $("viewDownloads"), viewConvert: $("viewConvert"), viewSettings: $("viewSettings"),
+    dlBadge: $("dlBadge"), dlSearch: $("dlSearch"), dlFilters: $("dlFilters"), dlList: $("dlList"), dlEmpty: $("dlEmpty"), clearDone: $("clearDone"),
+    sFreyState: $("sFreyState"), sFreyYoutube: $("sFreyYoutube"), sFreyInstagram: $("sFreyInstagram"), sFreyForget: $("sFreyForget"),
     cFormat: $("cFormat"), cMode: $("cMode"), cQuality: $("cQuality"), cOut: $("cOut"), cGpu: $("cGpu"), cGpuLabel: $("cGpuLabel"), cAdd: $("cAdd"), cRows: $("cRows"),
     sLanguage: $("sLanguage"), sOpenAtEnd: $("sOpenAtEnd"), sDetectLink: $("sDetectLink"), sYtRisk: $("sYtRisk"), sYtLogin: $("sYtLogin"), sYtCookies: $("sYtCookies"), sYtCookiesPath: $("sYtCookiesPath"), sModel: $("sModel"), sNew: $("sNew"), sDuplicate: $("sDuplicate"), sDelete: $("sDelete"),
     destMore: $("destMore"), recent: $("recent"), recentList: $("recentList"), recentEmpty: $("recentEmpty"),
     sName: $("sName"), sRoot: $("sRoot"), sFolderList: $("sFolderList"), sAddFolder: $("sAddFolder"), sTree: $("sTree"), sRestore: $("sRestore")
   };
   var s = {
+    live: new Map(), partOf: {}, history: [], dlFilter: "all", quick: false, runningKind: "", freySites: [],
     lang: "pt", tab: "project", running: false, projectOpen: false, convertOpen: false, confirmNext: false, broken: false,
     rows: [], files: [], nextId: 1, folders: [], defaultFolder: "", dest: "", outDir: "", requestSeq: 0, settingsSeq: 0, toolsChecked: false, gpu: "detectingGpu",
     status: "", statusKind: "", subfolders: [], subSeq: 0, recent: [], recentOpen: false, root: "", downloadOnly: false, needsName: true, models: [], savedNames: [], modelIndex: 0, saveTimer: null, armed: null
@@ -83,6 +86,8 @@
     refreshSettingsTree();
     renderYoutubeLogin();
     renderRecent();
+    renderDownloads();
+    renderFreyLogin();
     fit();
   }
 
@@ -141,6 +146,7 @@
     s.recentOpen = open;
     ui.recent.hidden = !open;
     ui.destMore.setAttribute("aria-expanded", String(open));
+    ui.viewProject.classList.toggle("is-recent-open", open);
     if (open) invoke("recent_paths").then(function (list) { s.recent = list; renderRecent(); fit(); });
     fit();
   }
@@ -178,7 +184,7 @@
   function youtubeSources() {
     // Chrome e Edge no Windows protegem o login contra outros programas: o yt-dlp nao consegue ler.
     // Brave usa a mesma base do Chrome e pode ter a mesma protecao: se nao der para ler, o app avisa.
-    var list = [["", "ytLoginOff"], ["firefox", "ytLoginFirefox"], ["brave", "ytLoginBrave"]];
+    var list = [["", "ytLoginOff"], ["auto", "ytLoginAuto"], ["firefox", "ytLoginFirefox"], ["brave", "ytLoginBrave"]];
     if (s.mac) list.push(["safari", "ytLoginSafari"], ["chrome", "ytLoginChrome"]);
     list.push(["file", "ytLoginFile"]);
     return list;
@@ -194,6 +200,7 @@
     ui.sYtCookies.hidden = !y.risk || y.source !== "file";
     ui.sYtCookiesPath.hidden = ui.sYtCookies.hidden;
     ui.sYtCookiesPath.textContent = y.file || t("ytLoginNoFile");
+    if (ui.sFreyState) renderFreyLogin();
   }
 
   function saveYoutubeLogin() {
@@ -245,26 +252,34 @@
   }
 
   function refreshControls() {
+    var converting = s.running && s.runningKind === "convert";
     if (s.tab === "convert") {
       var again = s.files.some(function (f) { return f.state === "fail" || f.state === "cancelled"; });
       ui.go.textContent = t(s.running ? "working" : again ? "tryAgain" : "convertBtn");
       ui.open.disabled = !s.convertOpen;
+      ui.go.disabled = s.running;
     } else {
+      var pending = pendingRows();
       var failed = s.rows.some(function (r) { return r.state === "fail" || r.state === "cancelled"; });
-      if (s.running) ui.go.textContent = t("working");
+      // Baixando, os links novos entram na fila do que ja esta rodando.
+      if (s.running && pending.length && !converting) ui.go.textContent = t("addToQueue", pending.length);
+      else if (s.running) ui.go.textContent = t("working");
       else if (s.confirmNext) ui.go.textContent = t("completeExisting");
       else if (failed) ui.go.textContent = t("tryAgain");
       else if (s.downloadOnly) ui.go.textContent = t("downloadBtn");
       else ui.go.textContent = t(s.rows.length ? "createAndDownload" : "createProject");
       ui.open.disabled = !s.projectOpen;
+      ui.go.disabled = converting || (s.running && !pending.length) || (s.broken && !s.downloadOnly);
     }
-    ui.go.disabled = s.running || (s.broken && s.tab === "project" && !s.downloadOnly);
     ui.cancel.hidden = !s.running;
+    ui.cancel.textContent = t(s.runningKind === "download" ? "stopAll" : "cancel");
     ui.actions.hidden = s.tab === "settings" && !s.running;
+    ui.go.hidden = s.tab === "downloads";
+    ui.open.hidden = s.tab === "downloads";
+    ui.clearDone.hidden = s.tab !== "downloads";
     // Modelos com erro so travam o que depende deles: baixar continua possivel.
-    [ui.name, ui.model].forEach(function (n) { n.disabled = s.running || s.broken; });
-    if (s.running && s.recentOpen) toggleRecent(false);
-    [ui.dest, ui.destMore, ui.links, ui.convertTo, ui.modeCreate, ui.modeDownload].forEach(function (n) { n.disabled = s.running; });
+    [ui.name, ui.model].forEach(function (n) { n.disabled = s.broken; });
+    ui.createFolders.disabled = s.broken && !s.downloadOnly;
     [ui.cFormat, ui.cMode, ui.cQuality, ui.cOut, ui.cAdd].forEach(function (n) { n.disabled = s.running; });
     if (!s.running) syncModeControl();
     [ui.sModel, ui.sNew, ui.sDuplicate, ui.sName, ui.sRoot, ui.sAddFolder, ui.sOpenAtEnd].forEach(function (n) { n.disabled = s.broken; });
@@ -273,8 +288,8 @@
 
   // Criar pastas pede o nome so se o modelo tiver onde usar; So baixar esconde o que e da estrutura.
   function applyMode() {
-    ui.modeCreate.setAttribute("aria-checked", String(!s.downloadOnly));
-    ui.modeDownload.setAttribute("aria-checked", String(s.downloadOnly));
+    ui.createFolders.checked = !s.downloadOnly;
+    ui.createFoldersHint.textContent = t(s.downloadOnly ? "createFoldersOff" : "createFoldersOn");
     ui.queryRow.hidden = s.downloadOnly || !s.needsName;
     ui.fieldModel.hidden = s.downloadOnly;
     ui.tree.hidden = s.downloadOnly;
@@ -286,7 +301,7 @@
   }
 
   function focusProject() {
-    if (s.running || s.tab !== "project") return;
+    if (s.tab !== "project") return;
     if (!s.downloadOnly && s.needsName && !s.broken) { ui.name.focus(); ui.name.select(); }
     else ui.links.focus();
   }
@@ -307,7 +322,7 @@
 
   function selectTab(tab) {
     s.tab = tab;
-    [["project", ui.tabProject, ui.viewProject], ["convert", ui.tabConvert, ui.viewConvert], ["settings", ui.tabSettings, ui.viewSettings]].forEach(function (x) {
+    [["project", ui.tabProject, ui.viewProject], ["downloads", ui.tabDownloads, ui.viewDownloads], ["convert", ui.tabConvert, ui.viewConvert], ["settings", ui.tabSettings, ui.viewSettings]].forEach(function (x) {
       x[1].setAttribute("aria-selected", String(x[0] === tab));
       x[2].hidden = x[0] !== tab;
     });
@@ -315,6 +330,7 @@
     refreshControls();
     if (tab === "convert") checkTools();
     if (tab === "settings") refreshSettingsTree();
+    if (tab === "downloads") renderDownloads();
     if ((tab !== "settings" && s.status === "saved") || (tab !== "project" && s.status === "linkDetected")) setStatus("");
     fit();
   }
@@ -393,7 +409,66 @@
     row.node.remove.disabled = s.running;
   }
 
-  // ---- aba Projeto
+  // ---- aba Projeto: cada link vira um cartao com capa, titulo e as escolhas dele
+
+  var SITE_TAG = { youtube: "YT", instagram: "IG", tiktok: "TT", x: "X", file: "GD", folder: "GD" };
+  var SITE_NAME = { youtube: "YouTube", instagram: "Instagram" };
+  var BROWSER_NAME = { firefox: "Firefox", brave: "Brave", opera: "Opera", vivaldi: "Vivaldi", chrome: "Chrome", edge: "Edge", chromium: "Chromium", safari: "Safari", file: "cookies.txt", frey: "Frey" };
+  var LOGIN_OFF = ["err.ytLoginOff", "err.igLoginOff"];
+  var LOGIN_MISSING = ["err.ytCookiesRead", "err.ytLoginRefused", "err.igLoginRefused"];
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  // "12:48" ou "1:02:05".
+  function clock(seconds) {
+    if (!(seconds > 0)) return seconds === 0 ? "0:00" : "";
+    var total = Math.round(seconds), h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, sec = total % 60;
+    var two = function (n) { return (n < 10 ? "0" : "") + n; };
+    return h ? h + ":" + two(m) + ":" + two(sec) : m + ":" + two(sec);
+  }
+
+  // "2:50", "170" ou "1:02:05" para segundos; NaN quando nao entende.
+  function parseClock(text) {
+    var parts = String(text).trim().split(":").map(Number);
+    if (!parts.length || parts.some(function (n) { return isNaN(n) || n < 0; })) return NaN;
+    return parts.reduce(function (acc, n) { return acc * 60 + n; }, 0);
+  }
+
+  // Capas chegam do Rust como data: (a politica do app nao libera imagens de outros sites).
+  var thumbCache = {};
+  function loadThumb(url, img) {
+    if (!url) return;
+    if (!thumbCache[url]) thumbCache[url] = invoke("thumb_data", { url: url }).then(function (d) { return d; }, function () { return ""; });
+    thumbCache[url].then(function (data) { if (data && img.isConnected !== false) { img.src = data; img.hidden = false; } });
+  }
+
+  function makeThumb(kind, thumb, time) {
+    var box = el("div", "thumb");
+    var img = el("img");
+    img.alt = "";
+    img.hidden = true;
+    box.appendChild(img);
+    var tag = el("span", "thumb__site " + kind, SITE_TAG[kind] || "");
+    box.appendChild(tag);
+    var t2 = el("span", "thumb__time");
+    t2.hidden = true;
+    box.appendChild(t2);
+    var api = {
+      box: box,
+      set: function (url, timeText) {
+        if (url && api.url !== url) { api.url = url; loadThumb(url, img); }
+        t2.textContent = timeText || "";
+        t2.hidden = !timeText;
+      }
+    };
+    api.set(thumb, time);
+    return api;
+  }
 
   function folderOptions(select, value) {
     while (select.firstChild) select.removeChild(select.firstChild);
@@ -402,50 +477,354 @@
     select.value = value;
   }
 
-  function qualityOptions(select, value, kind) {
+  // 2K e 4K so aparecem quando o video tem (ou quando ainda nao se sabe); 4K para edicao so no YouTube.
+  function qualityOptions(select, value, row) {
+    var height = row.probe && row.probe.meta && row.probe.meta.height;
     while (select.firstChild) select.removeChild(select.firstChild);
-    // Redes sociais nao oferecem 4K: a opcao so geraria uma conversao demorada.
-    QUALITIES.forEach(function (q) { if (q[0] !== "edit4k" || kind === "youtube") addOption(select, q[0], t(q[1], q[2])); });
+    QUALITIES.forEach(function (q) {
+      if ((q[0] === "edit4k" || q[0] === "2160" || q[0] === "1440") && row.kind !== "youtube") return;
+      if (q[0] === "2160" && height && height < 2160) return;
+      if (q[0] === "1440" && height && height < 1440) return;
+      addOption(select, q[0], t(q[1], q[2]));
+    });
     select.title = t("qualityHint");
     select.setAttribute("aria-label", t("videoQuality"));
     select.value = value;
+    if (select.value !== value) { select.value = "1080"; row.quality = "1080"; }
   }
 
-  function renderLink(row) {
-    if (!row.node) {
-      var select = document.createElement("select");
-      select.addEventListener("change", function () {
-        if (s.downloadOnly) row.sub = select.value;
-        else { row.folder = select.value; row.folderChosen = true; }
-      });
-      var selects = [select];
-      if (VIDEO_KINDS[row.kind]) {
-        var quality = document.createElement("select");
-        quality.className = "row__quality";
-        quality.addEventListener("change", function () { row.quality = quality.value; });
-        row.qualitySelect = quality;
-        selects.unshift(quality);
-      }
-      var kinds = { folder: "kindFolder", file: "kindFile" };
-      row.node = makeRow(ui.rows, VIDEO_KINDS[row.kind] || kinds[row.kind], row.url, selects, function () {
-        s.rows = s.rows.filter(function (r) { return r !== row; });
-      });
-    }
-    paintRow(row);
+  function lastQuality(kind) {
+    var q = localStorage.getItem("fp.quality") || "1080";
+    if (kind !== "youtube" && (q === "edit4k" || q === "2160" || q === "1440")) return "1080";
+    return q;
   }
+
+  function chip(label, onClick, title) {
+    var b = el("button", "chipbtn", label);
+    b.type = "button";
+    if (title) { b.title = title; b.setAttribute("aria-label", title); }
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function removeRow(row) {
+    if (row.state === "queued" || row.state === "running") {
+      (row.parts || [row]).forEach(function (p) { invoke("cancel_item", { id: p.id }); });
+      return;
+    }
+    s.rows = s.rows.filter(function (r) { return r !== row; });
+    row.node.li.remove();
+    refreshControls();
+    fit();
+  }
+
+  function buildCard(row) {
+    var li = el("li", "card");
+    var thumb = makeThumb(row.kind, "", "");
+    var meta = el("div", "card__meta");
+    var title = el("div", "card__title", row.url);
+    title.title = row.url;
+    var sub = el("div", "card__sub");
+    var ctrls = el("div", "card__ctrls");
+    var quality = null;
+    if (VIDEO_KINDS[row.kind]) {
+      quality = document.createElement("select");
+      quality.className = "row__quality";
+      quality.addEventListener("change", function () { row.quality = quality.value; localStorage.setItem("fp.quality", quality.value); });
+      ctrls.appendChild(quality);
+    }
+    var folder = document.createElement("select");
+    folder.className = "card__folder";
+    folder.setAttribute("aria-label", t("downloadTo"));
+    folder.addEventListener("change", function () {
+      if (s.downloadOnly) row.sub = folder.value;
+      else { row.folder = folder.value; row.folderChosen = true; }
+    });
+    ctrls.appendChild(folder);
+    var trimBtn = chip("", function () { row.trimOpen = !row.trimOpen; paintCard(row); fit(); }, t("trim"));
+    trimBtn.appendChild(scissors());
+    trimBtn.appendChild(el("span"));
+    var subsBtn = chip("CC", function () { row.subs = !row.subs; paintCard(row); }, t("subs"));
+    ctrls.appendChild(trimBtn);
+    ctrls.appendChild(subsBtn);
+    var remove = makeRemoveButton(function () { removeRow(row); });
+    remove.className = "chipbtn card__remove";
+    ctrls.appendChild(remove);
+    meta.appendChild(title);
+    meta.appendChild(sub);
+    meta.appendChild(ctrls);
+    var bar = el("div", "card__bar");
+    bar.appendChild(el("i"));
+    bar.hidden = true;
+    var extra = el("div", "card__extra");
+    extra.hidden = true;
+    li.appendChild(thumb.box);
+    li.appendChild(meta);
+    li.appendChild(bar);
+    li.appendChild(extra);
+    ui.rows.appendChild(li);
+    row.node = { li: li, thumb: thumb, title: title, sub: sub, quality: quality, folder: folder, trim: trimBtn, subs: subsBtn, remove: remove, bar: bar, extra: extra };
+  }
+
+  function scissors() {
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 12 12");
+    var p = document.createElementNS(ns, "path");
+    p.setAttribute("d", "M3 3.2a1.4 1.4 0 1 1 0 .01M3 8.8a1.4 1.4 0 1 1 0 .01M4.2 4.1 10.5 9M4.2 7.9 10.5 3");
+    svg.appendChild(p);
+    return svg;
+  }
+
+  function hasTrim(row) { return row.start != null && row.end != null && row.end > row.start; }
+
+  // Texto da linha de baixo do cartao, conforme o momento.
+  function cardSub(row) {
+    if (row.state !== "pending" || row.msg.length) {
+      if (row.msg.length) return { text: row.msg.map(tr).join(" · "), cls: { ok: "is-ok", running: "is-running", fail: "is-fail", warning: "is-warning" }[row.state] || "" };
+    }
+    var p = row.probe;
+    if (!p) return { text: VIDEO_KINDS[row.kind] ? t("probing") : t(row.kind === "folder" ? "kindFolder" : "kindFile") + " · Google Drive", cls: "" };
+    if (p.status === "loading") return { text: t("probing"), cls: "" };
+    if (p.error && LOGIN_OFF.concat(LOGIN_MISSING).indexOf(p.error) < 0) return { text: tr(p.error), cls: "is-fail" };
+    var m = p.meta;
+    if (!m) return { text: "", cls: "" };
+    var parts = [];
+    if (m.entries.length) parts.push(t("playlistCount", row.picked.length, m.entries.length));
+    if (m.uploader) parts.push(m.uploader);
+    if (m.duration) parts.push(clock(m.duration));
+    if (m.height >= 1440) parts.push(t("maxRes", m.height >= 2160 ? "4K" : "2K"));
+    return { text: parts.join(" · "), cls: "" };
+  }
+
+  function paintCard(row) {
+    if (!row.node) buildCard(row);
+    var n = row.node, p = row.probe, m = p && p.meta;
+    var busy = row.state === "queued" || row.state === "running";
+    var done = row.state === "ok" || row.state === "warning";
+    n.li.classList.toggle("is-ok", done);
+    n.li.classList.toggle("is-fail", row.state === "fail");
+    var title = m && m.title ? (m.entries.length ? t("playlistLabel", m.title) : m.title) : row.url;
+    n.title.textContent = title;
+    n.title.title = row.url;
+    var badge = m ? (m.entries.length ? t("videosCount", m.entries.length) : (m.duration ? clock(m.duration) : "")) : "";
+    n.thumb.set(m && (m.thumbnail || (m.entries[0] && m.entries[0].thumbnail)), badge);
+    var sub = cardSub(row);
+    n.sub.textContent = sub.text;
+    n.sub.title = sub.text;
+    n.sub.className = "card__sub" + (sub.cls ? " " + sub.cls : "");
+    if (n.quality) { qualityOptions(n.quality, row.quality, row); n.quality.disabled = busy || done; }
+    n.folder.disabled = busy || done;
+    var canTrim = !!(m && m.duration && !m.entries.length && VIDEO_KINDS[row.kind]);
+    n.trim.hidden = !canTrim;
+    n.trim.disabled = busy || done;
+    n.trim.setAttribute("aria-pressed", String(hasTrim(row) || !!row.trimOpen));
+    n.trim.lastChild.textContent = hasTrim(row) ? clock(row.start) + "–" + clock(row.end) : "";
+    n.subs.hidden = row.kind !== "youtube";
+    n.subs.disabled = busy || done;
+    n.subs.setAttribute("aria-pressed", String(!!row.subs));
+    n.remove.title = t(busy ? "stopItem" : "remove");
+    n.remove.setAttribute("aria-label", n.remove.title);
+    n.bar.hidden = row.state !== "running";
+    if (row.percent != null) n.bar.firstChild.style.width = Math.min(100, row.percent) + "%";
+    paintExtra(row);
+  }
+
+  // Area de baixo do cartao: corte, lista da playlist ou o login.
+  function paintExtra(row) {
+    var box = row.node.extra, p = row.probe;
+    var key = extraKey(row);
+    if (box.dataset.key === key) { syncTrim(row); return; }
+    box.dataset.key = key;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    box.className = "card__extra";
+    box.hidden = !key;
+    if (!key) return;
+    if (key.indexOf("trim") === 0) buildTrim(row, box);
+    else if (key.indexOf("playlist") === 0) buildPlaylist(row, box);
+    else if (key.indexOf("found") === 0) buildLoginFound(row, box);
+    else if (key.indexOf("login") === 0) buildLoginMissing(row, box);
+    if (p && p.error && key.indexOf("login") !== 0) box.hidden = true;
+  }
+
+  function extraKey(row) {
+    var p = row.probe, m = p && p.meta;
+    if (row.state !== "pending" && row.state !== "fail" && row.state !== "cancelled") return "";
+    if (p && p.error && (LOGIN_OFF.indexOf(p.error) >= 0 || LOGIN_MISSING.indexOf(p.error) >= 0)) return "login:" + p.error + ":" + s.lang;
+    if (row.trimOpen && m && m.duration) return "trim:" + s.lang;
+    if (m && m.entries.length) return "playlist:" + s.lang;
+    if (p && p.loginVia) return "found:" + p.loginVia + ":" + s.lang;
+    return "";
+  }
+
+  function buildTrim(row, box) {
+    var m = row.probe.meta, dur = Math.round(m.duration);
+    if (!hasTrim(row)) { row.start = 0; row.end = dur; }
+    box.classList.add("card__extra--gold");
+    var top = el("div", "extra__top");
+    top.appendChild(el("span", "", t("trimOnly")));
+    var len = el("span");
+    top.appendChild(len);
+    var range = el("div", "range2");
+    var fill = el("div", "range2__fill");
+    var a = document.createElement("input"), b = document.createElement("input");
+    [a, b].forEach(function (r) { r.type = "range"; r.min = "0"; r.max = String(dur); r.step = "1"; });
+    a.setAttribute("aria-label", t("trimStart"));
+    b.setAttribute("aria-label", t("trimEnd"));
+    range.appendChild(fill);
+    range.appendChild(a);
+    range.appendChild(b);
+    var times = el("div", "trim-times");
+    var ia = document.createElement("input"), ib = document.createElement("input");
+    ia.setAttribute("aria-label", t("trimStart"));
+    ib.setAttribute("aria-label", t("trimEnd"));
+    times.appendChild(el("span", "", t("trimStart")));
+    times.appendChild(ia);
+    times.appendChild(el("span", "", t("trimEnd")));
+    times.appendChild(ib);
+    if (m.chapters.length) {
+      var sel = document.createElement("select");
+      addOption(sel, "", t("trimChapters"));
+      m.chapters.forEach(function (ch, i) { addOption(sel, String(i), clock(ch.start) + " " + ch.title); });
+      sel.addEventListener("change", function () {
+        var ch = m.chapters[Number(sel.value)];
+        if (ch) { row.start = Math.round(ch.start); row.end = Math.round(ch.end); syncTrim(row); paintCard(row); }
+      });
+      times.appendChild(sel);
+    }
+    var whole = el("button", "link-btn", t("trimWhole"));
+    whole.type = "button";
+    whole.addEventListener("click", function () { row.start = null; row.end = null; row.trimOpen = false; paintCard(row); fit(); });
+    times.appendChild(whole);
+    box.appendChild(top);
+    box.appendChild(range);
+    box.appendChild(times);
+    row.trimUi = { a: a, b: b, ia: ia, ib: ib, fill: fill, len: len, dur: dur };
+    var fromRange = function () {
+      var x = Number(a.value), y = Number(b.value);
+      row.start = Math.min(x, y); row.end = Math.max(x, y);
+      syncTrim(row);
+      row.node.trim.lastChild.textContent = clock(row.start) + "–" + clock(row.end);
+    };
+    a.addEventListener("input", fromRange);
+    b.addEventListener("input", fromRange);
+    var fromText = function () {
+      var x = parseClock(ia.value), y = parseClock(ib.value);
+      if (!isNaN(x) && !isNaN(y) && y > x) { row.start = Math.min(x, dur); row.end = Math.min(y, dur); }
+      syncTrim(row);
+      paintCard(row);
+    };
+    ia.addEventListener("change", fromText);
+    ib.addEventListener("change", fromText);
+    syncTrim(row);
+  }
+
+  function syncTrim(row) {
+    var u = row.trimUi;
+    if (!u || !row.node.extra.contains(u.a) || !hasTrim(row)) return;
+    u.a.value = String(row.start);
+    u.b.value = String(row.end);
+    if (document.activeElement !== u.ia) u.ia.value = clock(row.start);
+    if (document.activeElement !== u.ib) u.ib.value = clock(row.end);
+    u.fill.style.insetInlineStart = (row.start / u.dur * 100) + "%";
+    u.fill.style.width = ((row.end - row.start) / u.dur * 100) + "%";
+    u.len.textContent = t("trimOf", clock(row.end - row.start), clock(u.dur));
+  }
+
+  function buildPlaylist(row, box) {
+    var m = row.probe.meta;
+    var top = el("div", "extra__top");
+    var count = el("span", "", t("playlistCount", row.picked.length, m.entries.length));
+    var toggle = el("button", "link-btn");
+    toggle.type = "button";
+    top.appendChild(count);
+    top.appendChild(toggle);
+    var list = el("ul", "pl-list");
+    var boxes = [];
+    var update = function () {
+      count.textContent = t("playlistCount", row.picked.length, m.entries.length);
+      toggle.textContent = t(row.picked.length === m.entries.length ? "markNone" : "markAll");
+      var sub = cardSub(row);
+      row.node.sub.textContent = sub.text;
+    };
+    m.entries.forEach(function (entry) {
+      var li = el("li"), label = el("label"), cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = row.picked.indexOf(entry.url) >= 0;
+      cb.addEventListener("change", function () {
+        row.picked = m.entries.filter(function (e, i) { return boxes[i].checked; }).map(function (e) { return e.url; });
+        update();
+      });
+      boxes.push(cb);
+      label.appendChild(cb);
+      label.appendChild(el("span", "pl__title", entry.title || entry.url));
+      label.appendChild(el("span", "pl__time", clock(entry.duration)));
+      li.appendChild(label);
+      list.appendChild(li);
+    });
+    toggle.addEventListener("click", function () {
+      var all = row.picked.length !== m.entries.length;
+      boxes.forEach(function (cb) { cb.checked = all; });
+      row.picked = all ? m.entries.map(function (e) { return e.url; }) : [];
+      update();
+    });
+    box.appendChild(top);
+    box.appendChild(list);
+    update();
+  }
+
+  function buildLoginFound(row, box) {
+    box.classList.add("card__extra--gold");
+    var line = el("div", "login-line");
+    line.appendChild(el("span", "login-dot"));
+    line.appendChild(el("b", "", t("loginFound", SITE_NAME[row.probe.site] || "", BROWSER_NAME[row.probe.loginVia] || row.probe.loginVia)));
+    box.appendChild(line);
+  }
+
+  function buildLoginMissing(row, box) {
+    var p = row.probe, site = SITE_NAME[p.site] || "";
+    var off = LOGIN_OFF.indexOf(p.error) >= 0;
+    var line = el("div", "login-line");
+    line.appendChild(el("span", "login-dot is-off"));
+    line.appendChild(el("b", "", off ? tr(p.error) : t("loginNotFound", site)));
+    box.appendChild(line);
+    if (!off && p.browsers.length) {
+      var list = el("div", "browsers");
+      p.browsers.forEach(function (b) { list.appendChild(el("span", "is-no", BROWSER_NAME[b] || b)); });
+      box.appendChild(list);
+      if (!s.mac && p.browsers.some(function (b) { return b === "chrome" || b === "edge"; })) box.appendChild(el("span", "hint-inline", t("loginProtected")));
+    }
+    var buttons = el("div", "extra__buttons");
+    if (!off) {
+      var frey = el("button", "btn btn--primary", t("loginWithFrey"));
+      frey.type = "button";
+      frey.addEventListener("click", function () { invoke("open_login", { site: p.site }).then(null, function (e) { setStatus(e, "error"); }); });
+      buttons.appendChild(frey);
+    }
+    var settings = el("button", "btn", t("openSettings"));
+    settings.type = "button";
+    settings.addEventListener("click", function () { selectTab("settings"); });
+    var skip = el("button", "btn", t("skip"));
+    skip.type = "button";
+    skip.addEventListener("click", function () { removeRow(row); });
+    buttons.appendChild(settings);
+    buttons.appendChild(skip);
+    box.appendChild(buttons);
+  }
+
+  function renderLink(row) { paintCard(row); }
 
   function renderRows() {
+    document.getElementById("viewProject").classList.toggle("download-only", s.downloadOnly);
     s.rows.forEach(function (row) {
       // Link que o usuario nao mudou acompanha a pasta de destino do modelo.
       if (!row.folderChosen && row.state === "pending") row.folder = s.defaultFolder;
       if (s.folders.indexOf(row.folder) < 0 && row.folder !== "") row.folder = s.defaultFolder;
-      renderLink(row);
+      paintCard(row);
       if (s.downloadOnly) {
         if (s.subfolders.indexOf(row.sub) < 0) row.sub = "";
         subfolderOptions(row.node.folder, row.sub || "");
       } else folderOptions(row.node.folder, row.folder);
-      row.node.folder.setAttribute("aria-label", t("downloadTo"));
-      if (row.qualitySelect) qualityOptions(row.qualitySelect, row.quality, row.kind);
     });
     fit();
   }
@@ -480,56 +859,117 @@
     }, function (error) { setStatus(error, "error"); });
   }
 
+  // Previa do link: capa, titulo, duracao, capitulos, playlist e o login, quando o site pede.
+  function probe(row) {
+    if (!VIDEO_KINDS[row.kind]) return;
+    row.probe = { status: "loading" };
+    paintCard(row);
+    invoke("probe_link", { url: row.url }).then(function (answer) {
+      if (s.rows.indexOf(row) < 0) return;
+      row.probe = { status: answer.meta ? "ok" : "error", meta: answer.meta, error: answer.error, site: answer.site, loginVia: answer.loginVia, browsers: answer.browsers || [] };
+      if (answer.meta && answer.meta.entries.length && !row.picked.length) row.picked = answer.meta.entries.map(function (e) { return e.url; });
+      paintCard(row);
+      fit();
+    }, function () { row.probe = { status: "error", error: "err.ytFailed", browsers: [] }; paintCard(row); });
+  }
+
   function addLinks(text) {
     return invoke("parse_links", { text: text }).then(function (links) {
+      var added = [];
       links.forEach(function (link) {
-        if (s.rows.some(function (r) { return r.url === link.url; })) return;
-        s.rows.push({ id: s.nextId++, url: link.url, kind: link.kind, folder: s.defaultFolder, quality: "1080", state: "pending", msg: ["waiting"], node: null });
+        if (s.rows.some(function (r) { return r.url === link.url && r.state !== "ok" && r.state !== "warning"; })) return;
+        var row = { id: s.nextId++, url: link.url, kind: link.kind, folder: s.defaultFolder, quality: lastQuality(link.kind), state: "pending", msg: [], node: null, picked: [] };
+        s.rows.push(row);
+        added.push(row);
       });
       renderRows();
+      added.forEach(probe);
       refreshControls();
+      if (added.length && s.quick) quickStart();
       return links.length;
     });
   }
 
-  // Entra em execucao e devolve a funcao que desfaz, se o Rust nao iniciar o trabalho.
-  // Marca antes de chamar: os eventos do Rust podem chegar antes da resposta do invoke.
-  function beginRun(items, paint) {
+  // Modo rapido: colou, baixou. Com a estrutura ligada, so falta o nome do projeto.
+  function quickStart() {
+    if (!s.downloadOnly && s.needsName && !ui.name.value.trim()) { setStatus("quickNeedsName", "warning"); ui.name.focus(); return; }
+    if (s.runningKind === "convert") return;
+    startProject(false);
+  }
+
+  // Marca os itens antes de chamar: os eventos do Rust podem chegar antes da resposta do invoke.
+  function beginRun(items, paint, kind) {
     var saved = items.map(function (r) { return { row: r, state: r.state, msg: r.msg }; });
+    var wasRunning = s.running;
     s.running = true;
+    s.runningKind = kind || "convert";
     items.forEach(function (r) { r.state = "queued"; r.msg = ["queued"]; paint(r); });
-    ui.track.hidden = false;
-    ui.bar.style.width = "0";
-    setStatus("preparing");
+    if (!wasRunning) {
+      ui.track.hidden = false;
+      ui.bar.style.width = "0";
+      setStatus("preparing");
+    }
     refreshControls();
     return function () {
-      s.running = false;
-      ui.track.hidden = true;
+      if (!wasRunning) { s.running = false; s.runningKind = ""; ui.track.hidden = true; setStatus(""); }
       saved.forEach(function (o) { o.row.state = o.state; o.row.msg = o.msg; paint(o.row); });
-      setStatus("");
       refreshControls();
     };
   }
 
+  function pendingRows() {
+    return s.rows.filter(function (r) { return r.state === "pending" || r.state === "fail" || r.state === "cancelled"; });
+  }
+
+  // Cada link vira um item do Rust; uma playlist vira um item por video marcado.
+  function itemsFor(rows) {
+    var items = [];
+    rows.forEach(function (r) {
+      var base = { kind: r.kind, folder: s.downloadOnly ? (r.sub || "") : r.folder, quality: r.quality, subs: !!r.subs };
+      var m = r.probe && r.probe.meta;
+      if (m && m.entries.length) {
+        r.parts = m.entries.filter(function (e) { return r.picked.indexOf(e.url) >= 0; }).map(function (e) {
+          var part = { id: s.nextId++, url: e.url, title: e.title, thumb: e.thumbnail, state: "queued" };
+          s.partOf[part.id] = r;
+          items.push(Object.assign({ id: part.id, url: e.url, title: e.title, thumb: e.thumbnail || "" }, base));
+          return part;
+        });
+        return;
+      }
+      r.parts = null;
+      var item = Object.assign({ id: r.id, url: r.url, title: (m && m.title) || "", thumb: (m && m.thumbnail) || "" }, base);
+      if (hasTrim(r) && !(r.start === 0 && m && r.end >= Math.round(m.duration))) { item.start = r.start; item.end = r.end; }
+      items.push(item);
+    });
+    return items;
+  }
+
   function startProject(confirmExisting) {
-    var pending = s.rows.filter(function (r) { return r.state !== "ok" && r.state !== "warning"; });
-    var undo = beginRun(pending, renderLink);
+    var pending = pendingRows().filter(function (r) { return !(r.probe && r.probe.meta && r.probe.meta.entries.length && !r.picked.length); });
+    var items = itemsFor(pending);
+    var undo = beginRun(pending, renderLink, "download");
+    items.forEach(function (item) { trackLive(item, "queued"); });
     invoke("start_job", { request: {
       model: ui.model.value, name: ui.name.value, dest: s.dest, confirmExisting: confirmExisting, convertTo: ui.convertTo.value, downloadOnly: s.downloadOnly,
-      items: pending.map(function (r) { return { id: r.id, url: r.url, kind: r.kind, folder: s.downloadOnly ? (r.sub || "") : r.folder, quality: r.quality }; })
+      items: items
     } }).then(function (answer) {
       if (answer.status === "needs_confirm") {
+        items.forEach(function (item) { s.live.delete(item.id); });
         undo();
         s.confirmNext = true;
         setStatus(c("existingConfirm", answer.root), "warning");
         refreshControls();
+        renderDownloads();
         return;
       }
       s.projectOpen = true;
       refreshControls();
       if (answer.status === "created") { undo(); setStatus(c("createdAt", answer.base)); }
+      if (answer.status === "queued") setStatus("queuedBatch");
     }, function (error) {
+      items.forEach(function (item) { s.live.delete(item.id); });
       undo();
+      renderDownloads();
       setStatus(error, "error");
       if (error === "err.nameNeeded") ui.name.focus();
     });
@@ -548,11 +988,41 @@
     ui.bar.style.width = Math.min(100, percent) + "%";
   }
 
+  // Velocidade media dos ultimos segundos e tempo que falta.
+  function speedOf(live, p) {
+    var now = Date.now();
+    if (live.lastAt && p.done >= live.lastDone && now > live.lastAt) {
+      var bps = (p.done - live.lastDone) * 1000 / (now - live.lastAt);
+      live.bps = live.bps ? live.bps * 0.7 + bps * 0.3 : bps;
+    }
+    if (!live.lastAt || now - live.lastAt > 400) { live.lastAt = now; live.lastDone = p.done; }
+    if (!live.bps || !p.total) return "";
+    return t("speedEta", formatSize(live.bps), clock((p.total - p.done) / live.bps));
+  }
+
+  // Playlist: o cartao mostra quantos ja foram e o video da vez.
+  function paintPlaylist(row) {
+    var parts = row.parts || [];
+    var ok = parts.filter(function (p) { return p.state === "ok" || p.state === "warning"; }).length;
+    var failed = parts.filter(function (p) { return p.state === "fail"; }).length;
+    var open = parts.filter(function (p) { return p.state === "queued" || p.state === "running"; }).length;
+    var current = parts.filter(function (p) { return p.state === "running"; })[0];
+    row.state = open ? "running" : failed ? "fail" : "ok";
+    row.msg = [c("playlistDone", ok, parts.length)];
+    if (failed) row.msg.push(c("playlistFailed", failed));
+    if (current) row.msg.push(current.title || current.url);
+    paintCard(row);
+  }
+
   function onJob(ev) {
-    var row = ev.id != null ? find(s.rows, ev.id) : null;
+    var row = ev.id != null ? (find(s.rows, ev.id) || s.partOf[ev.id]) : null;
+    var part = row && row.parts ? find(row.parts, ev.id) : null;
+    var live = ev.id != null ? s.live.get(ev.id) : null;
     switch (ev.event) {
       case "start":
-        if (row) { row.state = "running"; row.msg = ["downloading"]; renderLink(row); }
+        if (live) { live.state = "running"; live.msg = t("downloading"); }
+        if (part) { part.state = "running"; paintPlaylist(row); }
+        else if (row) { row.state = "running"; row.msg = ["downloading"]; row.percent = 0; renderLink(row); }
         ui.bar.style.width = "0";
         setStatus("connecting");
         break;
@@ -560,24 +1030,31 @@
         var p = ev.progress;
         var parts = [p.file];
         if (p.filesTotal > 1) parts.unshift(t("fileOf", p.filesDone + 1, p.filesTotal));
+        var speed = live ? speedOf(live, p) : "";
         if (p.total) {
           var percent = Math.floor(p.done * 100 / p.total);
           parts.push(t("sizeOf", percent, formatSize(p.done), formatSize(p.total)));
           setBar(percent);
+          if (row && !part) { row.percent = percent; row.msg = [c("sizeOf", percent, formatSize(p.done), formatSize(p.total))]; if (speed) row.msg.push(speed); renderLink(row); }
         } else {
           parts.push(formatSize(p.done));
           ui.bar.classList.add("is-indeterminate");
         }
+        if (speed) parts.push(speed);
+        if (live) { live.done = p.done; live.total = p.total; live.msg = parts.slice(1).join(" · "); }
         ui.status.textContent = parts.join(" · ");
         break;
       }
       case "converting":
-        if (row) { row.msg = ["converting"]; renderLink(row); }
+        if (live) live.msg = t("convertingFile", ev.file, Math.floor(ev.percent));
+        if (row && !part) { row.msg = ["converting"]; renderLink(row); }
         setBar(ev.percent);
         ui.status.textContent = t("convertingFile", ev.file, Math.floor(ev.percent));
         break;
       case "ok":
-        if (row) {
+        s.live.delete(ev.id);
+        if (part) { part.state = ev.convertError ? "warning" : "ok"; paintPlaylist(row); }
+        else if (row) {
           row.state = "ok";
           row.msg = [c("doneFiles", ev.downloaded)];
           if (ev.skipped) row.msg.push(c("skippedNote", ev.skipped));
@@ -591,15 +1068,23 @@
         fit();
         break;
       case "fail":
-        if (row) { row.state = "fail"; row.msg = [ev.message]; renderLink(row); }
+        s.live.delete(ev.id);
+        if (part) { part.state = "fail"; paintPlaylist(row); }
+        else if (row) { row.state = "fail"; row.msg = [ev.message]; renderLink(row); }
         fit();
         break;
       case "cancelled":
-        if (row) { row.state = "cancelled"; row.msg = ["cancelledKept"]; renderLink(row); }
+        s.live.delete(ev.id);
+        if (part) { part.state = "cancelled"; paintPlaylist(row); }
+        else if (row) { row.state = "cancelled"; row.msg = ["cancelledKept"]; renderLink(row); }
         break;
       case "done":
-        s.running = false;
-        ui.track.hidden = true;
+        if (!ev.more) {
+          s.running = false;
+          s.runningKind = "";
+          ui.track.hidden = true;
+          s.live.clear();
+        }
         refreshControls();
         s.rows.forEach(renderLink);
         if (ev.cancelled) setStatus(c("downloadCancelled", ev.ok), "warning");
@@ -607,6 +1092,180 @@
         else setStatus(c("downloadDone", ev.ok, ev.base));
         break;
     }
+    renderDownloadsSoon();
+  }
+
+  // ---- aba Baixados: o que esta baixando agora e o historico
+
+  function trackLive(item, state) {
+    s.live.set(item.id, { id: item.id, url: item.url, kind: item.kind, title: item.title || item.url, thumb: item.thumb || "", state: state, msg: "" });
+  }
+
+  var FILTERS = ["all", "running", "queued", "done", "failed"];
+  var FILTER_KEYS = { all: "filterAll", running: "filterRunning", queued: "filterQueued", done: "filterDone", failed: "filterFailed" };
+  function dlCounts() {
+    var live = Array.from(s.live.values());
+    return {
+      running: live.filter(function (l) { return l.state === "running"; }).length,
+      queued: live.filter(function (l) { return l.state === "queued"; }).length,
+      done: s.history.filter(function (h) { return h.state === "done" || h.state === "warning"; }).length,
+      failed: s.history.filter(function (h) { return h.state === "fail" || h.state === "cancelled"; }).length,
+      all: live.length + s.history.length
+    };
+  }
+
+  function whenText(seconds) {
+    var d = new Date(seconds * 1000), now = new Date();
+    var hm = d.toLocaleTimeString(LANGUAGES.filter(function (l) { return l[0] === s.lang; })[0][2], { hour: "2-digit", minute: "2-digit" });
+    var day = function (x) { return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+    var diff = Math.round((day(now) - day(d)) / 86400000);
+    if (diff === 0) return t("today", hm);
+    if (diff === 1) return t("yesterday", hm);
+    return d.toLocaleDateString(LANGUAGES.filter(function (l) { return l[0] === s.lang; })[0][2]) + " " + hm;
+  }
+
+  function folderName(path) { return String(path).split(/[\\/]/).filter(Boolean).pop() || path; }
+
+  function dlButton(label, title, onClick) {
+    var b = chip(label, onClick, title);
+    return b;
+  }
+
+  function liveItem(l) {
+    var li = el("li", "dl");
+    li.appendChild(makeThumb(l.kind, l.thumb, "").box);
+    var main = el("div", "dl__main");
+    main.appendChild(el("div", "dl__title", l.title));
+    main.appendChild(el("div", "dl__sub" + (l.state === "running" ? " is-ok" : ""), l.state === "queued" ? t("queued") : (l.msg || t("downloading"))));
+    if (l.state === "running") {
+      var bar = el("div", "dl__bar"), fill = el("i");
+      if (l.total) fill.style.width = Math.min(100, l.done * 100 / l.total) + "%";
+      bar.appendChild(fill);
+      main.appendChild(bar);
+    }
+    li.appendChild(main);
+    var actions = el("div", "dl__actions");
+    actions.appendChild(dlButton("■", t("stopItem"), function () { invoke("cancel_item", { id: l.id }); }));
+    li.appendChild(actions);
+    return li;
+  }
+
+  function historyItem(h) {
+    var li = el("li", "dl");
+    li.appendChild(makeThumb(h.kind, h.thumb, "").box);
+    var main = el("div", "dl__main");
+    main.appendChild(el("div", "dl__title", h.title || h.url));
+    var ok = h.state === "done" || h.state === "warning";
+    var text = ok ? t("doneWhen", whenText(h.when), folderName(h.folder)) + (h.bytes ? " · " + formatSize(h.bytes) : "")
+      : (h.state === "cancelled" ? t("cancelled") : tr(h.message)) + " · " + whenText(h.when);
+    var sub = el("div", "dl__sub " + (ok ? "is-ok" : "is-fail"), text);
+    sub.title = text;
+    main.appendChild(sub);
+    li.appendChild(main);
+    var actions = el("div", "dl__actions");
+    if (ok) {
+      actions.appendChild(dlButton("▶", t("openFile"), function () { invoke("open_path", { path: h.files[0] || h.folder }).then(null, function (e) { setStatus(e, "error"); }); }));
+      actions.appendChild(dlButton("📁", t("showInFolder"), function () { invoke("reveal_path", { path: h.files[0] || h.folder }).then(null, function (e) { setStatus(e, "error"); }); }));
+    } else {
+      actions.appendChild(dlButton("↻", t("tryAgain"), function () { retry(h); }));
+    }
+    var remove = makeRemoveButton(function () {
+      s.history = s.history.filter(function (x) { return x.id !== h.id; });
+      invoke("history_remove", { id: h.id });
+      renderDownloads();
+    });
+    remove.className = "chipbtn";
+    remove.title = t("removeEntry");
+    actions.appendChild(remove);
+    li.appendChild(actions);
+    return li;
+  }
+
+  // Tentar de novo baixa na mesma pasta, com a mesma qualidade.
+  function retry(h) {
+    var item = { id: s.nextId++, url: h.url, kind: h.kind, folder: "", quality: h.quality || "1080", title: h.title, thumb: h.thumb, subs: false };
+    trackLive(item, "queued");
+    if (!s.running) { s.running = true; s.runningKind = "download"; ui.track.hidden = false; }
+    refreshControls();
+    renderDownloads();
+    invoke("start_job", { request: { model: "", name: "", dest: h.folder, confirmExisting: false, convertTo: "", downloadOnly: true, items: [item] } }).then(function (answer) {
+      if (answer.status === "queued") setStatus("queuedBatch");
+    }, function (error) {
+      s.live.delete(item.id);
+      if (!s.live.size) { s.running = false; s.runningKind = ""; ui.track.hidden = true; }
+      refreshControls();
+      renderDownloads();
+      setStatus(error, "error");
+    });
+  }
+
+  var dlTimer = null;
+  function renderDownloadsSoon() {
+    if (dlTimer) return;
+    dlTimer = setTimeout(function () { dlTimer = null; renderDownloads(); }, 250);
+  }
+
+  function renderDownloads() {
+    var counts = dlCounts();
+    ui.dlBadge.hidden = !s.live.size;
+    ui.dlBadge.textContent = String(s.live.size);
+    while (ui.dlFilters.firstChild) ui.dlFilters.removeChild(ui.dlFilters.firstChild);
+    FILTERS.forEach(function (f) {
+      var b = el("button", f === "failed" && counts.failed ? "is-bad" : "", t(FILTER_KEYS[f], counts[f]));
+      b.type = "button";
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(s.dlFilter === f));
+      b.addEventListener("click", function () { s.dlFilter = f; renderDownloads(); });
+      ui.dlFilters.appendChild(b);
+    });
+    if (s.tab !== "downloads") return;
+    var query = ui.dlSearch.value.trim().toLowerCase();
+    var match = function (x) { return !query || (x.title + " " + x.url).toLowerCase().indexOf(query) >= 0; };
+    var items = [];
+    var f = s.dlFilter;
+    Array.from(s.live.values()).filter(match).forEach(function (l) {
+      if (f === "all" || f === l.state) items.push(liveItem(l));
+    });
+    s.history.filter(match).forEach(function (h) {
+      var ok = h.state === "done" || h.state === "warning";
+      if (f === "all" || (f === "done" && ok) || (f === "failed" && !ok)) items.push(historyItem(h));
+    });
+    var scroll = ui.dlList.scrollTop;
+    ui.dlList.replaceChildren.apply(ui.dlList, items);
+    ui.dlList.scrollTop = scroll;
+    ui.dlEmpty.hidden = items.length > 0;
+    ui.clearDone.disabled = !counts.done;
+    fit();
+  }
+
+  function onHistory(entry) {
+    // A mesma regra do Rust: tentar de novo o mesmo link na mesma pasta substitui a falha anterior.
+    s.history = s.history.filter(function (h) {
+      var replaced = h.url === entry.url && h.folder === entry.folder && h.state !== "done" && h.state !== "warning";
+      return h.id !== entry.id && !replaced;
+    });
+    s.history.unshift(entry);
+    renderDownloadsSoon();
+  }
+
+  // ---- login pelo Frey (Configuracoes)
+
+  function renderFreyLogin() {
+    var sites = s.freySites || [];
+    ui.sFreyState.textContent = sites.length ? t("freyConnected", sites.map(function (x) { return SITE_NAME[x]; }).join(", ")) : t("freyNone");
+    var on = !!(s.yt && s.yt.risk);
+    [ui.sFreyYoutube, ui.sFreyInstagram].forEach(function (b) { b.disabled = !on; });
+    ui.sFreyForget.hidden = !sites.length;
+  }
+
+  function onLoginSaved(sites) {
+    s.freySites = sites || [];
+    renderFreyLogin();
+    setStatus(sites && sites.length ? "loginSaved" : "loginNotSaved", sites && sites.length ? "" : "warning");
+    // Le de novo os links que pararam por falta de login.
+    s.rows.forEach(function (r) {
+      if (r.probe && r.probe.error && (LOGIN_OFF.indexOf(r.probe.error) >= 0 || LOGIN_MISSING.indexOf(r.probe.error) >= 0)) probe(r);
+    });
   }
 
   // ---- aba Converter
@@ -667,6 +1326,7 @@
         break;
       case "done":
         s.running = false;
+        s.runningKind = "";
         ui.track.hidden = true;
         refreshControls();
         s.files.forEach(paintRow);
@@ -891,9 +1551,25 @@
 
   // ---- eventos
 
-  ui.modeCreate.addEventListener("click", function () { setDownloadOnly(false); });
-  ui.modeDownload.addEventListener("click", function () { setDownloadOnly(true); });
+  ui.createFolders.addEventListener("change", function () { setDownloadOnly(!ui.createFolders.checked); });
+  ui.quick.addEventListener("change", function () {
+    s.quick = ui.quick.checked;
+    localStorage.setItem("fp.quick", s.quick ? "1" : "");
+    if (s.quick && pendingRows().length) quickStart();
+  });
   ui.tabProject.addEventListener("click", function () { selectTab("project"); focusProject(); });
+  ui.tabDownloads.addEventListener("click", function () { selectTab("downloads"); });
+  ui.dlSearch.addEventListener("input", renderDownloads);
+  ui.clearDone.addEventListener("click", function () {
+    invoke("history_clear_done").then(function (list) { s.history = list; renderDownloads(); });
+  });
+  ui.sFreyYoutube.addEventListener("click", function () { invoke("open_login", { site: "youtube" }).then(null, function (e) { setStatus(e, "error"); }); });
+  ui.sFreyInstagram.addEventListener("click", function () { invoke("open_login", { site: "instagram" }).then(null, function (e) { setStatus(e, "error"); }); });
+  ui.sFreyForget.addEventListener("click", function () {
+    confirmClick(ui.sFreyForget, "freyForgetConfirm", function () {
+      invoke("forget_frey_login").then(function (sites) { s.freySites = sites; renderFreyLogin(); ui.sFreyForget.textContent = t("freyForget"); });
+    });
+  });
   ui.tabConvert.addEventListener("click", function () { selectTab("convert"); });
   ui.tabSettings.addEventListener("click", function () { selectTab("settings"); });
   ui.go.addEventListener("click", function () {
@@ -943,9 +1619,19 @@
   });
   ui.sOpenAtEnd.addEventListener("change", persist);
   ui.sDetectLink.addEventListener("change", function () { invoke("set_detect_link", { detect: ui.sDetectLink.checked }); });
+  // O aviso de risco fica atras do icone de alerta e so abre quando o usuario pede.
+  var riskInfo = document.getElementById("riskInfo"), riskText = document.getElementById("riskText");
+  riskInfo.addEventListener("click", function () {
+    var open = riskText.hidden;
+    riskText.hidden = !open;
+    riskInfo.setAttribute("aria-expanded", String(open));
+    fit();
+  });
   ui.sYtRisk.addEventListener("change", function () {
     s.yt.risk = ui.sYtRisk.checked;
     if (!s.yt.risk) s.yt.source = "";
+    // Ao aceitar, o login ja comeca no automatico: procura a conta em todos os navegadores.
+    else if (!s.yt.source) s.yt.source = "auto";
     saveYoutubeLogin();
   });
   ui.sYtLogin.addEventListener("change", function () { s.yt.source = ui.sYtLogin.value; saveYoutubeLogin(); });
@@ -1008,7 +1694,7 @@
 
   // Colar link em qualquer ponto da aba Projeto adiciona a lista; texto comum segue para o campo.
   document.addEventListener("paste", function (e) {
-    if (s.running || s.tab !== "project") return;
+    if (s.tab !== "project") return;
     var text = e.clipboardData ? e.clipboardData.getData("text") : "";
     if (!/(drive|docs)\.google\.com\/|youtube\.com\/|youtu\.be\/|(x|twitter)\.com\/|instagram\.com\/|tiktok\.com\//.test(text) && e.target !== ui.links) return;
     e.preventDefault();
@@ -1038,8 +1724,8 @@
   listen("tauri://drag-drop", function (e) {
     ui.shell.classList.remove("is-dropping");
     var paths = e.payload.paths || [];
-    if (s.running || !paths.length || s.tab === "settings") return;
-    if (s.tab === "convert") { addFiles(paths); return; }
+    if (!paths.length || s.tab === "settings" || s.tab === "downloads") return;
+    if (s.tab === "convert") { if (!s.running) addFiles(paths); return; }
     invoke("is_folder", { path: paths[0] }).then(function (folder) {
       if (folder) { setDest(paths[0]); clearConfirm(); }
       else setStatus("dropFolderHint", "warning");
@@ -1047,12 +1733,14 @@
   });
 
   listen("job", function (e) { onJob(e.payload); });
+  listen("history", function (e) { onHistory(e.payload); });
+  listen("login-saved", function (e) { onLoginSaved(e.payload); });
   listen("convert", function (e) { onConvert(e.payload); });
   // Link recem-copiado fica pronto na lista; os ja concluidos saem. Nunca baixa sozinho.
   function takeCopiedLinks() {
-    if (s.running || s.broken) return;
+    if (s.broken) return;
     invoke("take_copied_links").then(function (links) {
-      if (!links.length || s.running) return;
+      if (!links.length) return;
       var known = links.every(function (link) { return s.rows.some(function (r) { return r.url === link.url && r.state !== "ok" && r.state !== "warning"; }); });
       if (known) return;
       s.rows.filter(function (r) { return r.state === "ok" || r.state === "warning"; }).forEach(function (r) { r.node.li.remove(); });
@@ -1091,6 +1779,10 @@
     s.downloadOnly = b.downloadOnly;
     ui.sDetectLink.checked = b.detectLink;
     s.yt = { source: b.youtubeLogin, file: b.youtubeCookies, risk: b.youtubeRisk };
+    s.quick = localStorage.getItem("fp.quick") === "1";
+    ui.quick.checked = s.quick;
+    invoke("history_list").then(function (list) { s.history = list; renderDownloads(); });
+    invoke("login_state").then(function (sites) { s.freySites = sites; renderFreyLogin(); });
     ui.sLanguage.value = s.lang;
     if (s.lang !== b.language) invoke("set_language", { language: s.lang });
     if (b.configError) {
@@ -1108,6 +1800,7 @@
     ui.name.value = b.defaultName;
     setDest(b.dest);
     s.running = b.running;
+    if (b.running) s.runningKind = "download";
     applyLanguage();
     applyMode();
     if (b.hotkeyError) setStatus(b.hotkeyError, "warning");

@@ -26,12 +26,20 @@ pub enum Login {
 }
 
 impl Login {
-    /// None quando desligado ou incompleto (arquivo ainda nao escolhido).
+    /// None quando desligado ou incompleto (arquivo ainda nao escolhido). "auto" e resolvido fora daqui.
     pub fn from_settings(source: &str, file: &str) -> Option<Login> {
         match source {
-            "firefox" | "brave" | "safari" | "chrome" => Some(Login::Browser(source.to_string())),
+            "firefox" | "brave" | "safari" | "chrome" | "edge" | "opera" | "vivaldi" | "chromium" => Some(Login::Browser(source.to_string())),
             "file" if !file.is_empty() => Some(Login::File(PathBuf::from(file))),
             _ => None,
+        }
+    }
+
+    /// Nome curto para lembrar e mostrar: "firefox", "brave"... ou "file" para um cookies.txt.
+    pub fn source(&self) -> String {
+        match self {
+            Login::Browser(name) => name.clone(),
+            Login::File(_) => "file".into(),
         }
     }
 
@@ -50,6 +58,61 @@ pub fn handles(kind: &str) -> bool {
 
 fn is_youtube(url: &str) -> bool {
     url.contains("youtube.com/") || url.contains("youtu.be/")
+}
+
+/// "youtube" ou "instagram" quando o link pode usar o login opcional; X e TikTok nunca usam a conta.
+pub fn site(url: &str) -> Option<&'static str> {
+    if is_youtube(url) {
+        Some("youtube")
+    } else if url.contains("instagram.com/") {
+        Some("instagram")
+    } else {
+        None
+    }
+}
+
+/// Navegadores com perfil neste computador, na ordem em que vale procurar o login.
+/// Firefox primeiro: no Windows, Chrome, Edge e parentes protegem o login contra outros programas.
+pub fn installed_browsers() -> Vec<&'static str> {
+    let home = |var: &str| std::env::var_os(var).map(PathBuf::from);
+    let mut found = Vec::new();
+    #[cfg(windows)]
+    {
+        let (roaming, local) = (home("APPDATA"), home("LOCALAPPDATA"));
+        let checks: [(&str, Option<PathBuf>); 7] = [
+            ("firefox", roaming.as_ref().map(|r| r.join("Mozilla\\Firefox\\Profiles"))),
+            ("brave", local.as_ref().map(|l| l.join("BraveSoftware\\Brave-Browser\\User Data"))),
+            ("opera", roaming.as_ref().map(|r| r.join("Opera Software\\Opera Stable"))),
+            ("vivaldi", local.as_ref().map(|l| l.join("Vivaldi\\User Data"))),
+            ("chrome", local.as_ref().map(|l| l.join("Google\\Chrome\\User Data"))),
+            ("edge", local.as_ref().map(|l| l.join("Microsoft\\Edge\\User Data"))),
+            ("chromium", local.as_ref().map(|l| l.join("Chromium\\User Data"))),
+        ];
+        for (name, path) in checks {
+            if path.is_some_and(|p| p.is_dir()) {
+                found.push(name);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let lib = home("HOME").map(|h| h.join("Library"));
+        let checks: [(&str, &str); 7] = [
+            ("safari", "Cookies"),
+            ("firefox", "Application Support/Firefox/Profiles"),
+            ("chrome", "Application Support/Google/Chrome"),
+            ("brave", "Application Support/BraveSoftware/Brave-Browser"),
+            ("edge", "Application Support/Microsoft Edge"),
+            ("opera", "Application Support/com.operasoftware.Opera"),
+            ("vivaldi", "Application Support/Vivaldi"),
+        ];
+        for (name, rel) in checks {
+            if lib.as_ref().is_some_and(|l| l.join(rel).exists()) {
+                found.push(name);
+            }
+        }
+    }
+    found
 }
 
 /// Sites onde o login opcional pode entrar, com as mensagens de cada um. X e TikTok nunca usam a conta.
@@ -79,6 +142,10 @@ const AUDIO_FORMAT: &str = "ba[format_id!=audio]/b";
 /// Argumentos da qualidade escolhida. H.264/AAC por padrao: e o que entra direto na edicao.
 pub fn quality_args(quality: &str) -> Vec<&'static str> {
     match quality {
+        // Acima de 1080p o YouTube nao tem H.264: 2K e 4K vem em VP9 (AV1 so se nao houver VP9), em SDR.
+        // A altura e um teto: video sem 4K vem na maior resolucao que tiver.
+        "2160" => vec!["-S", "res:2160,fps,hdr:sdr,vcodec:vp9,acodec:aac", "--merge-output-format", "mp4"],
+        "1440" => vec!["-S", "res:1440,fps,hdr:sdr,vcodec:vp9,acodec:aac", "--merge-output-format", "mp4"],
         "720" => vec!["-S", "vcodec:h264,res:720,acodec:aac", "--merge-output-format", "mp4"],
         "best" => vec!["-S", "res,fps"],
         // Maior resolucao ate 4K, em SDR: o app reencoda depois para H.264 de 8 bits, e HDR ficaria com a cor errada.
@@ -102,7 +169,27 @@ fn needs_hls(stderr: &str) -> bool {
     lower.contains("no video formats found") || lower.contains("requested format is not available") || lower.contains("live stream")
 }
 
+/// Pedidos que nao sao de qualidade: trazer a legenda junto. O trecho e cortado depois, no PC:
+/// o --download-sections do yt-dlp fica parado lendo o video direto do YouTube.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Extra {
+    /// Idiomas da legenda, como o yt-dlp entende ("pt.*,en.*"); None nao baixa legenda.
+    pub subs: Option<String>,
+}
+
+/// "1:02:05" para o nome do arquivo e para o yt-dlp.
+pub fn clock(seconds: f64) -> String {
+    let total = seconds.max(0.0).round() as u64;
+    let (h, m, s) = (total / 3600, total / 60 % 60, total % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
+#[cfg(test)]
 fn build_args(url: &str, dest: &Path, quality: &str, skip_hls: bool, login: Option<&Login>) -> Vec<String> {
+    build_args_with(url, dest, quality, skip_hls, login, &Extra::default())
+}
+
+fn build_args_with(url: &str, dest: &Path, quality: &str, skip_hls: bool, login: Option<&Login>, extra: &Extra) -> Vec<String> {
     let mut args: Vec<String> = vec!["-P".into(), dest.display().to_string()];
     let fixed = [
         "--ignore-config", "--no-playlist", "--no-overwrites", "--continue", "--newline", "--encoding", "utf-8",
@@ -120,6 +207,11 @@ fn build_args(url: &str, dest: &Path, quality: &str, skip_hls: bool, login: Opti
     }
     if skip_hls {
         args.extend(["--extractor-args".to_string(), SKIP_HLS.to_string()]);
+    }
+    if let Some(langs) = &extra.subs {
+        args.extend(
+            ["--write-subs", "--write-auto-subs", "--sub-langs", langs.as_str(), "--convert-subs", "srt"].map(String::from),
+        );
     }
     if let Some(login) = login {
         args.extend(login.args());
@@ -174,7 +266,7 @@ pub fn friendly_error(stderr: &str) -> String {
         "err.ytLogin".into()
     } else if lower.contains("private video") {
         "err.ytPrivate".into()
-    } else if lower.contains("video unavailable") || lower.contains("not available") {
+    } else if lower.contains("video unavailable") || lower.contains("is unavailable") || lower.contains("not available") {
         "err.ytUnavailable".into()
     } else if lower.contains("drm") {
         "err.ytDrm".into()
@@ -209,51 +301,229 @@ fn remove_intermediates(dest: &Path, before: &HashSet<PathBuf>, finals: &[PathBu
     }
 }
 
-pub fn download(url: &str, dest: &Path, quality: &str, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
+/// Baixa com trecho e legenda, procurando o login nas contas da lista, na ordem, so se o site pedir.
+/// `on_login` recebe o login que funcionou, para ser lembrado.
+#[allow(clippy::too_many_arguments)]
+pub fn download_with(
+    url: &str,
+    dest: &Path,
+    quality: &str,
+    extra: &Extra,
+    logins: &[Login],
+    on_login: &mut dyn FnMut(&Login),
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<Outcome, Error> {
     let tool = find_tool("yt-dlp").ok_or_else(|| Error::Message(MISSING.into()))?;
-    run(&tool, url, dest, quality, login, cancel, on_progress)
+    run_with(&tool, url, dest, quality, extra, logins, on_login, cancel, on_progress)
 }
 
 const LOGIN_ASKED: &str = "err.ytLogin";
+const COOKIES_READ: &str = "err.ytCookiesRead";
 
-/// Sempre tenta sem a conta. So se o YouTube ou o Instagram recusar por falta de login, e o usuario
-/// tiver ligado o login, tenta de novo com ele: a conta so e usada quando nao ha outro jeito.
+#[cfg(test)]
 fn run(tool: &Path, url: &str, dest: &Path, quality: &str, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
-    let first = run_once(tool, url, dest, quality, None, cancel, on_progress);
+    let logins: Vec<Login> = login.into_iter().cloned().collect();
+    run_with(tool, url, dest, quality, &Extra::default(), &logins, &mut |_| {}, cancel, on_progress)
+}
+
+/// Sempre tenta sem a conta. So se o YouTube ou o Instagram recusar por falta de login, tenta as contas
+/// da lista, uma por vez: a conta so e usada quando nao ha outro jeito.
+#[allow(clippy::too_many_arguments)]
+fn run_with(
+    tool: &Path,
+    url: &str,
+    dest: &Path,
+    quality: &str,
+    extra: &Extra,
+    logins: &[Login],
+    on_login: &mut dyn FnMut(&Login),
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<Outcome, Error> {
+    let first = run_once(tool, url, dest, quality, extra, None, cancel, on_progress);
     let Some((off, refused)) = login_site(url) else { return first };
     if !matches!(&first, Err(Error::Message(m)) if m == LOGIN_ASKED) {
         return first;
     }
-    let Some(login) = login else {
-        return Err(Error::Message(off.into()));
-    };
-    if let Login::File(path) = login {
-        if !path.is_file() {
-            return Err(Error::Message("err.ytCookiesRead".into()));
-        }
-    }
-    match run_once(tool, url, dest, quality, Some(login), cancel, on_progress) {
-        Err(Error::Message(m)) if m == LOGIN_ASKED => Err(Error::Message(refused.into())),
-        other => other,
-    }
+    with_logins(logins, off, refused, |login| run_once(tool, url, dest, quality, extra, Some(login), cancel, on_progress), on_login)
 }
 
-fn run_once(tool: &Path, url: &str, dest: &Path, quality: &str, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
-    match attempt(tool, url, dest, quality, is_youtube(url), login, cancel, on_progress) {
-        Err(Error::Message(message)) if message == RETRY_WITH_HLS => attempt(tool, url, dest, quality, false, login, cancel, on_progress),
-        other => other,
+/// Tenta cada login ate um funcionar. Login que nao pode ser lido (navegador protegido, arquivo que sumiu)
+/// passa para o proximo; recusa do site com login tambem. Outro erro para na hora.
+fn with_logins<T>(
+    logins: &[Login],
+    off: &str,
+    refused: &str,
+    mut try_one: impl FnMut(&Login) -> Result<T, Error>,
+    on_login: &mut dyn FnMut(&Login),
+) -> Result<T, Error> {
+    if logins.is_empty() {
+        return Err(Error::Message(off.into()));
     }
+    let mut was_refused = false;
+    for login in logins {
+        if let Login::File(path) = login {
+            if !path.is_file() {
+                continue;
+            }
+        }
+        match try_one(login) {
+            Ok(value) => {
+                on_login(login);
+                return Ok(value);
+            }
+            Err(Error::Message(m)) if m == LOGIN_ASKED => was_refused = true,
+            Err(Error::Message(m)) if m == COOKIES_READ => {}
+            other => return other,
+        }
+    }
+    Err(Error::Message(if was_refused { refused } else { COOKIES_READ }.into()))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn attempt(tool: &Path, url: &str, dest: &Path, quality: &str, skip_hls: bool, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
+fn run_once(tool: &Path, url: &str, dest: &Path, quality: &str, extra: &Extra, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
+    match attempt(tool, url, dest, quality, extra, is_youtube(url), login, cancel, on_progress) {
+        Err(Error::Message(message)) if message == RETRY_WITH_HLS => attempt(tool, url, dest, quality, extra, false, login, cancel, on_progress),
+        other => other,
+    }
+}
+
+// ---- Previa do link: capa, titulo, duracao, capitulos e, numa playlist, os videos dela.
+
+#[derive(Clone, Debug, Default, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Chapter {
+    pub title: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Entry {
+    pub url: String,
+    pub title: String,
+    pub duration: Option<f64>,
+    pub thumbnail: String,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Meta {
+    pub title: String,
+    pub uploader: String,
+    pub duration: Option<f64>,
+    pub thumbnail: String,
+    /// Maior altura de video oferecida (2160 = 4K).
+    pub height: Option<u64>,
+    pub chapters: Vec<Chapter>,
+    /// Videos da playlist; vazio quando o link e de um video so.
+    pub entries: Vec<Entry>,
+    pub has_subs: bool,
+}
+
+fn text(value: &serde_json::Value, key: &str) -> String {
+    value.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
+
+/// A maior imagem da lista "thumbnails", ou o campo "thumbnail".
+fn best_thumb(value: &serde_json::Value) -> String {
+    let listed = value.get("thumbnails").and_then(|t| t.as_array()).and_then(|list| {
+        list.iter()
+            .filter(|t| t.get("url").and_then(|u| u.as_str()).is_some_and(|u| u.starts_with("http")))
+            .max_by_key(|t| t.get("width").and_then(|w| w.as_u64()).unwrap_or(0) * t.get("height").and_then(|h| h.as_u64()).unwrap_or(0))
+            .map(|t| text(t, "url"))
+    });
+    listed.filter(|u| !u.is_empty()).unwrap_or_else(|| text(value, "thumbnail"))
+}
+
+/// Le o JSON do yt-dlp (-J --flat-playlist).
+pub fn parse_meta(json: &serde_json::Value) -> Meta {
+    let entries = json
+        .get("entries")
+        .and_then(|e| e.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|e| {
+                    let id = text(e, "id");
+                    let mut url = text(e, "url");
+                    if !url.starts_with("http") {
+                        url = text(e, "webpage_url");
+                    }
+                    if !url.starts_with("http") && !id.is_empty() && text(e, "ie_key").eq_ignore_ascii_case("youtube") {
+                        url = format!("https://www.youtube.com/watch?v={id}");
+                    }
+                    url.starts_with("http").then(|| Entry { url, title: text(e, "title"), duration: e.get("duration").and_then(|d| d.as_f64()), thumbnail: best_thumb(e) })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let chapters = json
+        .get("chapters")
+        .and_then(|c| c.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|c| Some(Chapter { title: text(c, "title"), start: c.get("start_time")?.as_f64()?, end: c.get("end_time")?.as_f64()? }))
+                .collect()
+        })
+        .unwrap_or_default();
+    let height = json
+        .get("formats")
+        .and_then(|f| f.as_array())
+        .and_then(|list| list.iter().filter_map(|f| f.get("height").and_then(|h| h.as_u64())).max())
+        .or_else(|| json.get("height").and_then(|h| h.as_u64()));
+    let has_subs = ["subtitles", "automatic_captions"].iter().any(|k| json.get(*k).and_then(|s| s.as_object()).is_some_and(|m| !m.is_empty()));
+    let uploader = [text(json, "uploader"), text(json, "channel"), text(json, "uploader_id")].into_iter().find(|u| !u.is_empty()).unwrap_or_default();
+    Meta { title: text(json, "title"), uploader, duration: json.get("duration").and_then(|d| d.as_f64()), thumbnail: best_thumb(json), height, chapters, entries, has_subs }
+}
+
+fn probe_once(tool: &Path, url: &str, login: Option<&Login>) -> Result<Meta, Error> {
+    let mut command = Command::new(tool);
+    crate::platform::quiet(&mut command);
+    command.args(["--ignore-config", "-J", "--flat-playlist", "--no-warnings", "--encoding", "utf-8", "--socket-timeout", "20"]);
+    // Link de video dentro de playlist mostra so o video, como o download faz.
+    if url.contains("watch?") || url.contains("youtu.be/") || url.contains("/shorts/") {
+        command.arg("--no-playlist");
+    }
+    if let Some(login) = login {
+        command.args(login.args());
+    }
+    let output = command.args(["--", url]).env("PYTHONUTF8", "1").output().map_err(|e| Error::Message(crate::i18n::code("err.ytStart", &[&e.to_string()])))?;
+    if !output.status.success() {
+        return Err(Error::Message(friendly_error(&String::from_utf8_lossy(&output.stderr))));
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| Error::Message("err.ytFailed".into()))?;
+    Ok(parse_meta(&json))
+}
+
+/// Previa de um link, com a mesma regra de login do download. Devolve tambem o login que funcionou.
+pub fn probe(url: &str, logins: &[Login]) -> Result<(Meta, Option<Login>), Error> {
+    let tool = find_tool("yt-dlp").ok_or_else(|| Error::Message(MISSING.into()))?;
+    probe_with(&tool, url, logins)
+}
+
+fn probe_with(tool: &Path, url: &str, logins: &[Login]) -> Result<(Meta, Option<Login>), Error> {
+    let first = probe_once(tool, url, None);
+    let Some((off, refused)) = login_site(url) else { return first.map(|m| (m, None)) };
+    match first {
+        Err(Error::Message(m)) if m == LOGIN_ASKED => {}
+        other => return other.map(|m| (m, None)),
+    }
+    let mut used = None;
+    let meta = with_logins(logins, off, refused, |login| probe_once(tool, url, Some(login)), &mut |login| used = Some(login.clone()))?;
+    Ok((meta, used))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attempt(tool: &Path, url: &str, dest: &Path, quality: &str, extra: &Extra, skip_hls: bool, login: Option<&Login>, cancel: &AtomicBool, on_progress: &mut dyn FnMut(Progress)) -> Result<Outcome, Error> {
     std::fs::create_dir_all(dest)?;
     let before = existing_files(dest);
     let mut command = Command::new(tool);
     crate::platform::quiet(&mut command);
     crate::platform::own_group(&mut command);
     let mut child = command
-        .args(build_args(url, dest, quality, skip_hls, login))
+        .args(build_args_with(url, dest, quality, skip_hls, login, extra))
         .env("PYTHONUTF8", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -516,7 +786,7 @@ mod tests {
         assert_eq!(Login::from_settings("file", ""), None, "arquivo ainda nao escolhido");
         assert_eq!(Login::from_settings("firefox", ""), Some(Login::Browser("firefox".into())));
         assert_eq!(Login::from_settings("brave", ""), Some(Login::Browser("brave".into())));
-        assert_eq!(Login::from_settings("edge", ""), None, "Edge e Chrome no Windows nao funcionam");
+        assert_eq!(Login::from_settings("safari-x", ""), None, "nome desconhecido nao vira login");
         assert_eq!(Login::File("C:\\c.txt".into()).args(), ["--cookies".to_string(), "C:\\c.txt".to_string()]);
         assert_eq!(friendly_error("ERROR: could not find firefox cookies database in C:\\x"), "err.ytCookiesRead");
         assert_eq!(friendly_error("ERROR: 'c.txt' does not look like a Netscape format cookies file"), "err.ytCookiesRead");
@@ -622,5 +892,118 @@ mod tests {
         let result = run(&dir.join("nao-existe.exe"), URL, &dir, "1080", None, &AtomicBool::new(false), &mut |_| {});
         assert!(matches!(result, Err(Error::Message(m)) if m.starts_with("err.ytStart")));
         assert_eq!(MISSING, "err.ytMissing");
+    }
+
+    #[test]
+    fn login_automatico_tenta_cada_conta_e_avisa_qual_funcionou() {
+        let dir = temp_dir("auto");
+        let log = dir.join("chamadas.txt");
+        // So o login do Firefox abre o post; o Brave e o Chrome nao tem a conta.
+        let script = format!(
+            "echo %* >> \"{}\"\r\necho %* | findstr /c:\"--cookies-from-browser firefox\" >nul || (echo ERROR: [Instagram] a: login required, use --cookies 1>&2 & exit /b 1)\r\necho x> \"%~2\\Reel [a].mp4\"\r\necho FREYDONE^|%~2\\Reel [a].mp4",
+            log.display()
+        );
+        let tool = fake(&dir, &script);
+        let logins = vec![
+            Login::File(dir.join("login-frey-que-nao-existe.txt")),
+            Login::Browser("brave".into()),
+            Login::Browser("firefox".into()),
+            Login::Browser("chrome".into()),
+        ];
+        let mut used = None;
+        let outcome = run_with(&tool, "https://www.instagram.com/reel/a/", &dir.join("s"), "1080", &Extra::default(), &logins, &mut |l| used = Some(l.clone()), &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(outcome.downloaded, 1);
+        assert_eq!(used, Some(Login::Browser("firefox".into())));
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().count(), 3, "sem conta, Brave, Firefox; o arquivo que sumiu e o Chrome nem sao tentados");
+        assert!(!calls.contains("chrome"));
+    }
+
+    #[test]
+    fn navegador_protegido_passa_para_o_proximo() {
+        let dir = temp_dir("protegido");
+        let script = "echo %* | findstr /c:\"--cookies-from-browser chrome\" >nul && (echo ERROR: Failed to decrypt with DPAPI 1>&2 & exit /b 1)\r\necho %* | findstr /c:\"--cookies-from-browser\" >nul || (echo ERROR: [youtube] a: Sign in to confirm your age 1>&2 & exit /b 1)\r\necho x> \"%~2\\Clipe.mp4\"\r\necho FREYDONE^|%~2\\Clipe.mp4";
+        let tool = fake(&dir, script);
+        let logins = vec![Login::Browser("chrome".into()), Login::Browser("opera".into())];
+        let mut used = None;
+        run_with(&tool, URL, &dir.join("s"), "1080", &Extra::default(), &logins, &mut |l| used = Some(l.clone()), &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(used, Some(Login::Browser("opera".into())));
+        // Nenhum navegador pode ser lido: explica que nao achou o login, nao que o site recusou.
+        let only_chrome = vec![Login::Browser("chrome".into())];
+        let result = run_with(&tool, URL, &dir.join("s"), "1080", &Extra::default(), &only_chrome, &mut |_| {}, &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(result.unwrap_err(), Error::Message("err.ytCookiesRead".into()));
+    }
+
+    #[test]
+    fn legenda_vira_argumentos() {
+        let extra = Extra { subs: Some("pt.*,en.*".into()) };
+        let args = build_args_with(URL, Path::new("D:\\p"), "1080", true, None, &extra);
+        assert!(args.windows(2).any(|w| w == ["--sub-langs", "pt.*,en.*"]));
+        assert!(args.iter().any(|a| a == "--write-auto-subs") && args.windows(2).any(|w| w == ["--convert-subs", "srt"]));
+        let plain = build_args_with(URL, Path::new("D:\\p"), "1080", true, None, &Extra::default());
+        assert!(!plain.iter().any(|a| a == "--write-subs" || a == "--download-sections"));
+        assert_eq!(clock(59.6), "1:00");
+        assert_eq!(clock(3725.0), "1:02:05");
+    }
+
+    #[test]
+    fn previa_le_titulo_capitulos_altura_e_playlist() {
+        let video: serde_json::Value = serde_json::from_str(r#"{
+            "title": "Tokyo at Night", "uploader": "Rambalac", "duration": 768.0,
+            "thumbnails": [{"url": "https://i.ytimg.com/a.jpg", "width": 120, "height": 90}, {"url": "https://i.ytimg.com/b.jpg", "width": 1280, "height": 720}],
+            "formats": [{"height": 1080}, {"height": 2160}, {"height": null}],
+            "chapters": [{"title": "Shinjuku", "start_time": 0.0, "end_time": 170.0}, {"title": "Kabukicho", "start_time": 170.0, "end_time": 415.0}],
+            "subtitles": {}, "automatic_captions": {"en": []}
+        }"#).unwrap();
+        let meta = parse_meta(&video);
+        assert_eq!((meta.title.as_str(), meta.uploader.as_str(), meta.duration), ("Tokyo at Night", "Rambalac", Some(768.0)));
+        assert_eq!(meta.thumbnail, "https://i.ytimg.com/b.jpg");
+        assert_eq!(meta.height, Some(2160));
+        assert_eq!(meta.chapters[1], Chapter { title: "Kabukicho".into(), start: 170.0, end: 415.0 });
+        assert!(meta.has_subs && meta.entries.is_empty());
+
+        let playlist: serde_json::Value = serde_json::from_str(r#"{
+            "_type": "playlist", "title": "Stock Japão", "uploader": "Canal",
+            "entries": [
+                {"id": "aaa", "ie_key": "Youtube", "url": "https://www.youtube.com/watch?v=aaa", "title": "Um", "duration": 45, "thumbnails": [{"url": "https://i.ytimg.com/aaa.jpg"}]},
+                {"id": "bbb", "ie_key": "Youtube", "url": "bbb", "title": "Dois"},
+                {"id": "ccc", "title": "Sem link"}
+            ]
+        }"#).unwrap();
+        let list = parse_meta(&playlist);
+        assert_eq!(list.entries.len(), 2);
+        assert_eq!(list.entries[0], Entry { url: "https://www.youtube.com/watch?v=aaa".into(), title: "Um".into(), duration: Some(45.0), thumbnail: "https://i.ytimg.com/aaa.jpg".into() });
+        assert_eq!(list.entries[1].url, "https://www.youtube.com/watch?v=bbb");
+        assert!(!list.has_subs);
+    }
+
+    #[test]
+    fn previa_usa_o_login_so_quando_o_site_pede() {
+        let dir = temp_dir("probe");
+        let script = "echo %* | findstr /c:\"--cookies-from-browser firefox\" >nul || (echo ERROR: [Instagram] a: login required, use --cookies 1>&2 & exit /b 1)\r\necho {\"title\": \"Reel\", \"duration\": 12}";
+        let tool = fake(&dir, script);
+        let reel = "https://www.instagram.com/reel/a/";
+        let (meta, used) = probe_with(&tool, reel, &[Login::Browser("brave".into()), Login::Browser("firefox".into())]).unwrap();
+        assert_eq!((meta.title.as_str(), meta.duration), ("Reel", Some(12.0)));
+        assert_eq!(used, Some(Login::Browser("firefox".into())));
+        assert_eq!(probe_with(&tool, reel, &[]).unwrap_err(), Error::Message("err.igLoginOff".into()));
+        let open = fake(&dir, "echo {\"title\": \"Publico\"}");
+        assert_eq!(probe_with(&open, reel, &[Login::Browser("firefox".into())]).unwrap().1, None, "post aberto nao usa a conta");
+    }
+
+    #[test]
+    fn dois_k_e_quatro_k_tem_teto_de_altura_e_preferem_vp9() {
+        assert_eq!(quality_args("2160"), vec!["-S", "res:2160,fps,hdr:sdr,vcodec:vp9,acodec:aac", "--merge-output-format", "mp4"]);
+        assert!(quality_args("1440")[1].starts_with("res:1440,"));
+    }
+
+    #[test]
+    fn site_do_login() {
+        assert_eq!(site(URL), Some("youtube"));
+        assert_eq!(site("https://www.instagram.com/p/a/"), Some("instagram"));
+        assert_eq!(site("https://x.com/a/status/1"), None);
+        assert_eq!(Login::Browser("opera".into()).source(), "opera");
+        assert_eq!(Login::from_settings("vivaldi", ""), Some(Login::Browser("vivaldi".into())));
+        assert_eq!(Login::from_settings("auto", ""), None, "auto e resolvido pelo app");
     }
 }

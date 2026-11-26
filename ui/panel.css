@@ -77,20 +77,23 @@ button { cursor: pointer; }
 .check { display: flex; align-items: center; gap: 6px; align-self: flex-end; height: 30px; color: var(--fk-muted); font-size: 11px; }
 .check input { margin: 0; accent-color: var(--fk-gold); }
 /* Login do YouTube: aviso de risco para a conta, sempre visivel e em destaque. */
-.risk { margin: 4px 12px 10px; padding: 10px 0 2px; border: 1px solid var(--fk-danger); border-radius: var(--fk-radius); background: var(--fk-danger-bg); }
-.risk__title { margin: 0; padding: 0 12px 4px; color: var(--fk-danger); font-size: 13px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
-.risk__text { margin: 0; padding: 0 12px 6px; color: var(--fk-text); font-size: 12px; line-height: 17px; }
-.risk .check--risk { align-self: auto; height: auto; padding: 2px 12px 4px; color: var(--fk-text); font-weight: 600; }
+/* Login do YouTube e do Instagram: discreto; o aviso de risco abre pelo icone de alerta. */
+.risk { margin: 4px 12px 10px; padding: 8px 0 2px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); }
+.risk__head { display: flex; align-items: center; gap: 8px; padding: 0 12px 4px; }
+.risk__title { margin: 0; font-size: 12.5px; font-weight: 600; }
+.risk__icon { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: var(--fk-radius); background: transparent; color: var(--fk-danger); }
+.risk__icon:hover, .risk__icon[aria-expanded="true"] { border-color: rgba(244, 151, 157, .45); background: var(--fk-danger-bg); }
+.risk__icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.risk__text { margin: 2px 12px 8px; padding: 8px 10px; border: 1px solid rgba(244, 151, 157, .45); border-radius: var(--fk-radius); background: var(--fk-danger-bg); }
+.risk__text[hidden] { display: none; }
+.risk__text p { margin: 0; color: var(--fk-text); font-size: 11.5px; line-height: 16px; }
+.risk__text p + p { margin-top: 6px; color: var(--fk-muted); }
+.risk .check--risk { align-self: auto; height: auto; padding: 2px 12px 4px; color: var(--fk-text); }
 .risk .fields { padding-top: 4px; }
 .drop { display: block; width: calc(100% - 24px); height: 44px; margin: 0 12px 8px; border: 1px dashed var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); color: var(--fk-muted); }
 .drop:hover:not(:disabled), .is-dropping .drop { border-color: var(--fk-focus); color: var(--fk-text); }
 .drop:disabled { opacity: .5; cursor: default; }
 
-.mode { flex: none; display: flex; gap: 4px; padding: 6px 12px; border-top: 1px solid var(--fk-border); }
-.mode button { flex: 1; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--fk-radius); background: transparent; color: var(--fk-muted); font-size: 12px; }
-.mode button:hover:not(:disabled) { background: var(--fk-raised); color: var(--fk-text); }
-.mode button[aria-checked="true"] { border-color: var(--fk-gold); background: var(--fk-selection); color: var(--fk-text); }
-.mode button:disabled { opacity: .5; cursor: default; }
 .query { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--fk-surface); border-top: 1px solid var(--fk-border); }
 .query svg { flex: none; width: 18px; height: 18px; color: var(--fk-muted); fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
 .query input { min-width: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; font-size: 16px; caret-color: var(--fk-focus); }
@@ -110,9 +113,9 @@ button { cursor: pointer; }
 .tree b { color: var(--fk-text); font-weight: 400; }
 
 .paste { flex: none; padding: 8px 12px; border-top: 1px solid var(--fk-border); }
-.paste input { width: 100%; height: 30px; padding: 0 8px; border: 1px dashed var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); }
-.paste input::placeholder { color: var(--fk-muted); opacity: 1; }
-.paste input:focus-visible { border-style: solid; }
+.paste input[type="text"] { width: 100%; height: 30px; padding: 0 8px; border: 1px dashed var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); }
+.paste input[type="text"]::placeholder { color: var(--fk-muted); opacity: 1; }
+.paste input[type="text"]:focus-visible { border-style: solid; }
 
 .rows { flex: none; list-style: none; margin: 0; padding: 0; max-height: 216px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--fk-border) transparent; }
 .rows:empty { display: none; }
@@ -169,4 +172,134 @@ button { cursor: pointer; }
 .recent__forget svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .recent__empty { margin: 0; padding: 6px 8px; color: var(--fk-muted); font-size: 12px; }
 /* So baixar: o menu de pasta de cada link so aparece se a pasta escolhida tiver subpastas. */
-.download-only.no-subfolders .row select:not(.row__quality) { display: none; }
+
+/* Chave "Criar pastas do projeto": um fluxo so, a estrutura entra quando precisa. */
+.switch { appearance: none; flex: none; position: relative; width: 34px; height: 18px; margin: 0; border-radius: 9px; background: rgba(255, 255, 255, .2); cursor: pointer; transition: background var(--fk-press-duration); }
+.switch::after { content: ""; position: absolute; top: 2px; inset-inline-start: 2px; width: 14px; height: 14px; border-radius: 50%; background: #d7dbe2; transition: inset-inline-start var(--fk-press-duration); }
+.switch:checked { background: var(--fk-gold); }
+.switch:checked::after { inset-inline-start: 18px; background: var(--fk-gold-ink); }
+.switch--small { width: 28px; height: 15px; }
+.switch--small::after { width: 11px; height: 11px; }
+.switch--small:checked::after { inset-inline-start: 15px; }
+.switch:disabled { opacity: .5; cursor: default; }
+.toggle-row { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--fk-border); cursor: pointer; }
+.toggle-row__text { display: grid; min-width: 0; }
+.toggle-row__text b { font-size: 12.5px; font-weight: 600; }
+.toggle-row__text small { color: var(--fk-muted); font-size: 11px; }
+
+/* Modo rapido ao lado do campo de links. */
+.paste { display: flex; align-items: center; gap: 8px; }
+.paste input[type="text"] { flex: 1; min-width: 0; }
+.quick { flex: none; display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); font-size: 11.5px; white-space: nowrap; cursor: pointer; }
+.quick svg { width: 11px; height: 11px; fill: var(--fk-muted); }
+.quick:has(input:checked) { border-color: var(--fk-gold); background: var(--fk-selection); }
+.quick:has(input:checked) svg { fill: var(--fk-focus); }
+
+.tab-badge { margin-inline-start: 5px; padding: 0 5px; border-radius: 8px; background: var(--fk-gold); color: var(--fk-gold-ink); font-size: 9.5px; font-weight: 700; line-height: 14px; }
+
+/* Cartao de cada link: capa, titulo e controles. */
+.cards { flex: none; list-style: none; margin: 0; padding: 0 12px 8px; max-height: 330px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--fk-border) transparent; display: grid; gap: 6px; }
+.cards:empty { display: none; }
+.card { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 4px 10px; padding: 7px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); }
+.card.is-ok { border-color: rgba(223, 189, 98, .45); }
+.card.is-fail { border-color: rgba(244, 151, 157, .45); }
+.thumb { position: relative; width: 104px; height: 58px; border-radius: 6px; overflow: hidden; background: linear-gradient(135deg, #2b3038, #1b1e23); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb__site { position: absolute; top: 4px; inset-inline-start: 4px; padding: 0 4px; border-radius: 4px; font-size: 9px; font-weight: 700; line-height: 14px; color: #fff; background: #555; text-shadow: none; }
+.thumb__site.youtube { background: #c4302b; }
+.thumb__site.instagram { background: linear-gradient(45deg, #f09433, #bc1888); }
+.thumb__site.tiktok, .thumb__site.x { background: #000; box-shadow: inset 0 0 0 1px #444; }
+.thumb__site.file, .thumb__site.folder { background: #1a73e8; }
+.thumb__time { position: absolute; bottom: 4px; inset-inline-end: 4px; padding: 0 4px; border-radius: 4px; background: rgba(0, 0, 0, .78); font-size: 10px; line-height: 14px; text-shadow: none; }
+.card__meta { min-width: 0; display: grid; gap: 3px; align-content: start; }
+.card__title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; unicode-bidi: plaintext; }
+.card__sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fk-muted); font-size: 11px; }
+.card__sub.is-ok, .card__sub.is-running { color: var(--fk-ok); }
+.card__sub.is-fail { color: var(--fk-danger); white-space: normal; }
+.card__sub.is-warning { color: var(--fk-warning); white-space: normal; }
+.card__ctrls { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.card__ctrls select { height: 24px; max-width: 150px; padding: 0 4px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); font-size: 11.5px; }
+.chipbtn { height: 24px; min-width: 24px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 7px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: transparent; color: var(--fk-muted); font-size: 11px; }
+.chipbtn:hover:not(:disabled) { background: var(--fk-raised); color: var(--fk-text); }
+.chipbtn[aria-pressed="true"] { border-color: var(--fk-gold); background: var(--fk-selection); color: var(--fk-focus); }
+.chipbtn:disabled { opacity: .45; cursor: default; }
+.chipbtn svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.4; }
+.card__remove { margin-inline-start: auto; }
+.card__remove:hover:not(:disabled) { background: var(--fk-danger-bg); color: var(--fk-danger); }
+.card__bar { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.card__bar i { display: block; height: 100%; width: 0; background: var(--fk-gold); transition: width .2s linear; }
+.card__extra { grid-column: 1 / -1; display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: rgba(0, 0, 0, .18); font-size: 11.5px; }
+.card__extra[hidden] { display: none; }
+.card__extra--gold { border-color: rgba(223, 189, 98, .35); background: rgba(223, 189, 98, .06); }
+.extra__top { display: flex; justify-content: space-between; gap: 8px; color: var(--fk-muted); }
+
+/* Corte de trecho: duas alcas sobre a mesma faixa. */
+.range2 { position: relative; height: 22px; }
+.range2::before { content: ""; position: absolute; inset: 9px 0; border-radius: 2px; background: rgba(255, 255, 255, .14); }
+.range2__fill { position: absolute; top: 8px; height: 6px; border-radius: 3px; background: var(--fk-gold); }
+.range2 input { position: absolute; inset: 0; width: 100%; margin: 0; background: none; pointer-events: none; appearance: none; }
+.range2 input::-webkit-slider-thumb { appearance: none; pointer-events: auto; width: 12px; height: 18px; border-radius: 3px; background: var(--fk-gold); border: 1px solid var(--fk-gold-ink); cursor: ew-resize; }
+.trim-times { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.trim-times input { width: 64px; height: 24px; padding: 0 6px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); font-size: 11.5px; text-align: center; }
+.trim-times select { margin-inline-start: auto; height: 24px; max-width: 200px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); font-size: 11px; }
+
+/* Playlist: escolher quais videos. */
+.pl-list { list-style: none; margin: 0; padding: 0; max-height: 132px; overflow-y: auto; display: grid; gap: 3px; scrollbar-width: thin; }
+.pl-list label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.pl-list input { margin: 0; accent-color: var(--fk-gold); }
+.pl-list .pl__title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pl-list .pl__time { color: var(--fk-muted); font-size: 10.5px; }
+.link-btn { padding: 0; border: 0; background: none; color: var(--fk-focus); font-size: 11px; text-decoration: underline; text-underline-offset: 2px; }
+
+/* Login: achado sozinho, ou opcoes quando nao achou. */
+.login-line { display: flex; align-items: center; gap: 8px; }
+.login-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fk-gold); }
+.login-dot.is-off { background: var(--fk-danger); }
+.browsers { display: flex; flex-wrap: wrap; gap: 4px; }
+.browsers span { padding: 0 7px; border: 1px solid var(--fk-border); border-radius: 9px; color: var(--fk-muted); font-size: 10.5px; line-height: 16px; }
+.browsers span.is-ok { border-color: var(--fk-gold); color: var(--fk-focus); }
+.browsers span.is-no { opacity: .55; text-decoration: line-through; }
+.extra__buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.extra__buttons .btn { height: 26px; padding: 0 10px; font-size: 11.5px; }
+
+/* Aba Baixados. */
+.search { flex: 1; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border: 1px solid var(--fk-border); border-radius: var(--fk-radius); background: var(--fk-field); }
+.search svg { width: 13px; height: 13px; fill: none; stroke: var(--fk-muted); stroke-width: 1.4; }
+.search input { flex: 1; min-width: 0; border: 0; background: none; font-size: 12.5px; }
+.search input:focus-visible { outline: none; }
+.search:focus-within { border-color: var(--fk-focus); }
+.filters { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; }
+.filters button { height: 24px; padding: 0 10px; border: 1px solid var(--fk-border); border-radius: 12px; background: transparent; color: var(--fk-muted); font-size: 11px; }
+.filters button[aria-selected="true"] { border-color: var(--fk-gold); background: var(--fk-selection); color: var(--fk-text); }
+.filters button.is-bad { color: var(--fk-danger); }
+.dl-list { flex: none; list-style: none; margin: 0; padding: 0 12px 8px; max-height: 360px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--fk-border) transparent; }
+.dl-list:empty { display: none; }
+.dl { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid rgba(255, 255, 255, .08); }
+.dl:first-child { border-top: 0; }
+.dl .thumb { width: 64px; height: 36px; border-radius: 5px; }
+.dl__main { min-width: 0; display: grid; gap: 2px; }
+.dl__title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; unicode-bidi: plaintext; }
+.dl__sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fk-muted); font-size: 11px; }
+.dl__sub.is-ok { color: var(--fk-ok); }
+.dl__sub.is-fail { color: var(--fk-danger); }
+.dl__bar { height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.dl__bar i { display: block; height: 100%; width: 0; background: var(--fk-gold); }
+.dl__actions { display: flex; gap: 4px; }
+.dl-empty { margin: 0; padding: 18px 12px 22px; text-align: center; color: var(--fk-muted); font-size: 12px; }
+.dl-empty[hidden] { display: none; }
+
+/* Login pelo Frey, em Configuracoes. */
+.frey-login { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 2px 12px 8px; }
+.frey-login__title { font-weight: 600; font-size: 12px; }
+.frey-login__state { color: var(--fk-muted); font-size: 11px; }
+.frey-login__buttons { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; }
+.hint-inline { color: var(--fk-muted); font-size: 10.5px; }
+/* So baixar sem subpastas no destino: o menu de pasta de cada link some. */
+.download-only.no-subfolders .card__folder { display: none; }
+
+/* Rolagem: o painel para em 720 px (o limite da janela) e a aba aberta rola por inteiro, com uma rolagem so. */
+.shell { max-height: 720px; }
+#viewProject, #viewDownloads, #viewConvert, #viewSettings { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--fk-border) transparent; }
+.cards, .dl-list { max-height: none; overflow: visible; }
+/* A lista de recentes desce por cima do resto: com ela aberta, a aba nao corta o que passa da borda. */
+#viewProject.is-recent-open { overflow: visible; }

@@ -83,7 +83,7 @@ try {
     if ((Eval 'document.getElementById("go").disabled') -eq $false -and ((Get-Date) - $t0).TotalSeconds -gt 2) { break }
   }
   $status = Eval 'document.getElementById("status").textContent'
-  [void]$results.Add("INFO  status do YouTube: $status | linha: $(Eval 'document.querySelector(''#rows .row__state'').textContent')")
+  [void]$results.Add("INFO  status do YouTube: $status | linha: $(Eval 'document.querySelector(''#rows .card__sub'').textContent')")
   [void]$results.Add("INFO  executaveis vistos: $(($seen.Keys | ForEach-Object { $_.Replace($app, '<app>') }) -join ', ')")
   $ytSeen = @($seen.Keys | Where-Object { $_ -like '*yt-dlp.exe' })
   Check 'yt-dlp usado e o embutido' ($ytSeen.Count -ge 1 -and @($ytSeen | Where-Object { $_ -notlike "$app\*" }).Count -eq 0)

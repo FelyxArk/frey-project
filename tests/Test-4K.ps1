@@ -32,7 +32,7 @@ function Eval([string]$expr) {
     if ($o.id -eq $id) { return $o.result.result.value }
   }
 }
-function Row { Eval 'document.querySelector("#rows .row__state").textContent' }
+function Row { Eval 'document.querySelector("#rows .card__sub").textContent' }
 function Status { Eval 'document.getElementById("status").textContent' }
 function Busy { (Eval 'document.getElementById("go").disabled') -eq $true }
 function Tools { @(Get-CimInstance Win32_Process -Filter "Name='yt-dlp.exe' OR Name='ffmpeg.exe' OR Name='deno.exe'") }

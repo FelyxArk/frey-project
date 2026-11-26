@@ -237,6 +237,49 @@ fn run_ffmpeg(
 }
 
 /// Converte um arquivo e devolve o caminho da saida. Em falha, so remove a propria saida parcial.
+/// Corta um trecho sem recodificar. Comeca no quadro-chave anterior ao inicio (folga de um ou dois
+/// segundos), por isso e rapido. Nunca sobrescreve; o original fica intacto.
+pub fn cut(src: &Path, dst: &Path, start: f64, end: f64, cancel: &AtomicBool) -> Result<(), Error> {
+    let ffmpeg = find_tool("ffmpeg").ok_or_else(|| Error::Message(FFMPEG_MISSING.into()))?;
+    // Checa antes: o arquivo apagado em caso de falha so pode ser o que este corte comecou a escrever.
+    if dst.exists() {
+        return Err(Error::Message("err.exists".into()));
+    }
+    let mut child = quiet_command(&ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-n", "-ss", &format!("{:.3}", start.max(0.0)), "-i"])
+        .arg(src)
+        .args(["-t", &format!("{:.3}", (end - start).max(0.1)), "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-avoid_negative_ts", "make_zero"])
+        .arg(dst)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Message(crate::i18n::code("err.ffmpegStart", &[&e.to_string()])))?;
+    let mut stderr = child.stderr.take().expect("stderr");
+    let errors = std::thread::spawn(move || {
+        let mut text = Vec::new();
+        let _ = stderr.read_to_end(&mut text);
+        String::from_utf8_lossy(&text).into_owned()
+    });
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(dst);
+            return Err(Error::Cancelled);
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            let text = errors.join().unwrap_or_default();
+            if status.success() {
+                return Ok(());
+            }
+            let _ = std::fs::remove_file(dst);
+            let tail = text.lines().last().unwrap_or("err.ffmpegFailed").to_string();
+            return Err(Error::Message(tail));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 pub fn convert_file(
     src: &Path,
     options: &Options,
@@ -309,6 +352,20 @@ mod tests {
             .status()
             .ok()?;
         status.success().then_some(path)
+    }
+
+    #[test]
+    fn corta_o_trecho_sem_tocar_no_original() {
+        let dir = temp_dir("cut");
+        let Some(src) = sample(&dir, "4") else { return };
+        let before = std::fs::metadata(&src).unwrap().len();
+        let dst = dir.join("trecho.mp4");
+        cut(&src, &dst, 1.0, 3.0, &AtomicBool::new(false)).unwrap();
+        let length = duration_of(&dst).unwrap();
+        assert!((1.5..=3.2).contains(&length), "trecho com {length} s");
+        assert_eq!(std::fs::metadata(&src).unwrap().len(), before, "original intacto");
+        assert!(cut(&src, &dst, 0.0, 1.0, &AtomicBool::new(false)).is_err(), "nunca sobrescreve");
+        assert!(dst.exists(), "falha nao apaga o que ja existia");
     }
 
     #[test]

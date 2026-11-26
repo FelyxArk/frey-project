@@ -14,7 +14,7 @@ pub fn code(key: &str, args: &[&str]) -> String {
 }
 
 /// Ordem de cada linha: pt, en, es, fr, ja, zh, zht, ru, ar.
-const NATIVE: [(&str, [&str; 9]); 10] = [
+const NATIVE: [(&str, [&str; 9]); 11] = [
     ("trayOpen", ["Abrir painel", "Open panel", "Abrir panel", "Ouvrir le panneau", "パネルを開く", "打开面板", "開啟面板", "Открыть панель", "فتح اللوحة"]),
     ("trayQuit", ["Sair", "Quit", "Salir", "Quitter", "終了", "退出", "結束", "Выйти", "خروج"]),
     ("dialogDest", ["Onde criar o projeto?", "Where should the project be created?", "¿Dónde crear el proyecto?", "Où créer le projet ?", "プロジェクトの作成先", "在哪里创建项目？", "要在哪裡建立專案？", "Где создать проект?", "أين يتم إنشاء المشروع؟"]),
@@ -24,6 +24,7 @@ const NATIVE: [(&str, [&str; 9]); 10] = [
     ("filterAll", ["Todos os arquivos", "All files", "Todos los archivos", "Tous les fichiers", "すべてのファイル", "所有文件", "所有檔案", "Все файлы", "كل الملفات"]),
     ("notifyDownloaded", ["{0} link(s) baixado(s).", "{0} link(s) downloaded.", "{0} enlace(s) descargado(s).", "{0} lien(s) téléchargé(s).", "{0} 件のリンクをダウンロードしました。", "已下载 {0} 个链接。", "已下載 {0} 個連結。", "Загружено ссылок: {0}.", "تم تنزيل {0} من الروابط."]),
     ("notifyDownloadFailed", ["{0} link(s) baixado(s), {1} com falha. Abra o painel para tentar de novo.", "{0} link(s) downloaded, {1} failed. Open the panel to try again.", "{0} enlace(s) descargado(s), {1} con error. Abre el panel para reintentar.", "{0} lien(s) téléchargé(s), {1} en échec. Ouvrez le panneau pour réessayer.", "{0} 件ダウンロード、{1} 件失敗。パネルを開いて再試行してください。", "已下载 {0} 个，{1} 个失败。打开面板重试。", "已下載 {0} 個，{1} 個失敗。開啟面板重試。", "Загружено: {0}, с ошибкой: {1}. Откройте панель, чтобы повторить.", "تم تنزيل {0}، وفشل {1}. افتح اللوحة لإعادة المحاولة."]),
+    ("loginWindow", ["Entrar pelo Frey", "Sign in with Frey", "Entrar con Frey", "Se connecter avec Frey", "Frey でログイン", "通过 Frey 登录", "透過 Frey 登入", "Войти через Frey", "تسجيل الدخول عبر Frey"]),
     ("notifyConverted", ["{0} convertido(s), {1} com falha.", "{0} converted, {1} failed.", "{0} convertido(s), {1} con error.", "{0} converti(s), {1} en échec.", "{0} 件変換、{1} 件失敗。", "已转换 {0} 个，{1} 个失败。", "已轉換 {0} 個，{1} 個失敗。", "Преобразовано: {0}, с ошибкой: {1}.", "تم تحويل {0}، وفشل {1}."]),
 ];
 

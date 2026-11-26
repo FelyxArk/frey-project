@@ -28,8 +28,8 @@ function Eval([string]$expr) {
 }
 function CopyText([string]$text) { foreach ($i in 1..10) { try { [Windows.Forms.Clipboard]::SetText($text); break } catch { Start-Sleep -Milliseconds 100 } }; Start-Sleep -Milliseconds 1300 }
 function OpenPanel { [void](Eval 'window.__TAURI__.event.emit("panel-shown").then(()=>1)'); Start-Sleep -Milliseconds 700 }
-function Rows { [int](Eval 'document.querySelectorAll("#rows .row").length') }
-function FirstUrl { Eval '(document.querySelector("#rows .row__link")||{}).textContent||""' }
+function Rows { [int](Eval 'document.querySelectorAll("#rows .card").length') }
+function FirstUrl { Eval '(document.querySelector("#rows .card__title")||{}).title||""' }
 function Launch {
   $script:proc = Start-Process $Exe -ArgumentList '--hidden' -PassThru
   $tg = $null
@@ -63,11 +63,11 @@ try {
   OpenPanel
   Check 'link novo fica pronto ao abrir' ((Rows) -eq 1 -and (FirstUrl) -eq $driveLink)
   Check 'avisa que adicionou' ((Eval 'document.getElementById("status").textContent') -match 'copiado')
-  Check 'nao comeca a baixar sozinho' ((Eval 'document.getElementById("go").disabled') -eq $false -and (Eval 'document.querySelector("#rows .row__state").textContent') -eq 'Aguardando')
+  Check 'nao comeca a baixar sozinho' ((Eval 'document.getElementById("go").disabled') -eq $false -and (Eval 'document.querySelector("#rows .card__sub").textContent') -notmatch 'Baixando|Conclu')
   OpenPanel
   Check 'mesma copia nao entra duas vezes' ((Rows) -eq 1)
 
-  [void](Eval 'document.querySelector("#rows .row button").click()'); Start-Sleep -Milliseconds 300
+  [void](Eval 'document.querySelector("#rows .card__remove").click()'); Start-Sleep -Milliseconds 300
   OpenPanel
   Check 'link removido nao volta sem copiar de novo' ((Rows) -eq 0)
 
@@ -90,7 +90,7 @@ try {
   Check 'link igual ao que ja esta na lista nao duplica' ((Rows) -eq 2)
 
   # Na aba Converter o link leva de volta ao Projeto
-  [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
+  [void](Eval '[...document.querySelectorAll("#rows .card__remove")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
   [void](Eval 'document.getElementById("tabConvert").click()'); Start-Sleep -Milliseconds 300
   CopyText $ytLink
   OpenPanel
@@ -98,33 +98,33 @@ try {
 
   # Linha concluida sai quando chega link novo
   if ($env:FREY_TEST_DRIVE_FILE) {
-    [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
+    [void](Eval '[...document.querySelectorAll("#rows .card__remove")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
     CopyText $env:FREY_TEST_DRIVE_FILE
     OpenPanel
     [void](Eval 'document.getElementById("go").click()')
     Start-Sleep -Milliseconds 400
     foreach ($i in 1..120) { if ((Eval 'document.getElementById("go").disabled') -eq $false) { break }; Start-Sleep -Milliseconds 250 }
-    Check 'download real terminou' ((Eval 'document.querySelector("#rows .row__state").textContent') -match 'Conclu')
+    Check 'download real terminou' ((Eval 'document.querySelector("#rows .card__sub").textContent') -match 'Conclu')
     CopyText $ytLink
     OpenPanel
     Check 'concluido sai e o novo fica' ((Rows) -eq 1 -and (FirstUrl) -eq $ytLink)
-    [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())')
+    [void](Eval '[...document.querySelectorAll("#rows .card__remove")].forEach(b=>b.click())')
   }
 
   # Redes sociais entram com o proprio rotulo; perfil nao entra
-  [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
+  [void](Eval '[...document.querySelectorAll("#rows .card__remove")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
   CopyText 'https://www.tiktok.com/@autor'
   OpenPanel
   Check 'link de perfil nao entra' ((Rows) -eq 0)
   foreach ($site in @(@('https://x.com/autor/status/1234567890', 'X'), @('https://www.instagram.com/reel/AbCdEf123/', 'Instagram'), @('https://www.tiktok.com/@autor/video/1234567890', 'TikTok'))) {
     CopyText $site[0]
     OpenPanel
-    Check "$($site[1]) entra pronto, sem 4K" ((FirstUrl) -eq $site[0] -and (Eval 'document.querySelector("#rows .row__kind").textContent') -eq $site[1] -and (Eval 'document.querySelector("#rows select.row__quality option[value=edit4k]")===null') -eq $true)
-    [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
+    Check "$($site[1]) entra pronto, sem 4K" ((FirstUrl) -eq $site[0] -and (Eval 'document.querySelector("#rows .thumb__site").className') -match $site[1].ToLower() -and (Eval 'document.querySelector("#rows select.row__quality option[value=edit4k]")===null') -eq $true)
+    [void](Eval '[...document.querySelectorAll("#rows .card__remove")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
   }
 
   # Desligar a opcao
-  [void](Eval '[...document.querySelectorAll("#rows .row button")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
+  [void](Eval '[...document.querySelectorAll("#rows .card__remove")].forEach(b=>b.click())'); Start-Sleep -Milliseconds 300
   [void](Eval 'document.getElementById("tabSettings").click()'); Start-Sleep -Milliseconds 300
   Check 'opcao vem ligada' ((Eval 'document.getElementById("sDetectLink").checked') -eq $true)
   [void](Eval 'document.getElementById("sDetectLink").click()'); Start-Sleep -Milliseconds 500

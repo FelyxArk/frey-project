@@ -5,6 +5,7 @@
 mod clipboard;
 mod convert;
 mod drive;
+mod history;
 mod i18n;
 mod models;
 mod outside_click;
@@ -57,17 +58,65 @@ struct Settings {
     /// O usuario marcou que entende o risco para a conta. Sem isso o login fica desligado.
     #[serde(default)]
     youtube_risco_aceito: bool,
+    /// Onde o login automatico achou a conta de cada site: "youtube" -> "firefox", "instagram" -> "frey"...
+    #[serde(default)]
+    login_encontrado: std::collections::BTreeMap<String, String>,
     /// Ultimos destinos usados, do mais novo para o mais antigo.
     #[serde(default)]
     historico: Vec<String>,
 }
 
-fn youtube_login(app: &AppHandle) -> Option<youtube::Login> {
+/// Arquivo com o login feito pela janela do proprio Frey ("Entrar pelo Frey").
+fn frey_login_path(app: &AppHandle) -> PathBuf {
+    config_dir(app).unwrap_or_default().join("login-frey.txt")
+}
+
+/// Contas para tentar quando o site pede login, na ordem. Sem o aceite de risco, nenhuma.
+/// "auto": login do Frey, depois o navegador que ja funcionou, depois os outros navegadores instalados.
+fn logins_for(app: &AppHandle, url: &str) -> Vec<youtube::Login> {
     let settings = app.state::<Shared>().settings.lock().unwrap().clone();
+    let Some(site) = youtube::site(url) else { return Vec::new() };
     if !settings.youtube_risco_aceito {
-        return None;
+        return Vec::new();
     }
-    youtube::Login::from_settings(&settings.youtube_login, &settings.youtube_cookies)
+    if settings.youtube_login != "auto" {
+        return youtube::Login::from_settings(&settings.youtube_login, &settings.youtube_cookies).into_iter().collect();
+    }
+    let frey = frey_login_path(app);
+    let mut list = Vec::new();
+    if login_state_of(&frey).contains(&site) {
+        list.push(youtube::Login::File(frey));
+    }
+    let remembered = settings.login_encontrado.get(site).cloned().unwrap_or_default();
+    let mut browsers: Vec<&str> = youtube::installed_browsers();
+    if let Some(at) = browsers.iter().position(|b| *b == remembered) {
+        let found = browsers.remove(at);
+        browsers.insert(0, found);
+    }
+    list.extend(browsers.into_iter().map(|b| youtube::Login::Browser(b.to_string())));
+    list
+}
+
+/// Guarda onde a conta foi achada, para a proxima vez comecar por ali.
+fn remember_login(app: &AppHandle, url: &str, login: &youtube::Login) {
+    let Some(site) = youtube::site(url) else { return };
+    let source = match login {
+        youtube::Login::File(path) if *path == frey_login_path(app) => "frey".to_string(),
+        other => other.source(),
+    };
+    let state = app.state::<Shared>();
+    let mut settings = state.settings.lock().unwrap();
+    if settings.login_encontrado.get(site) != Some(&source) {
+        settings.login_encontrado.insert(site.to_string(), source);
+        save_settings(app, &settings);
+    }
+}
+
+fn login_label(app: &AppHandle, login: &youtube::Login) -> String {
+    match login {
+        youtube::Login::File(path) if *path == frey_login_path(app) => "frey".into(),
+        other => other.source(),
+    }
 }
 
 #[derive(Default)]
@@ -78,6 +127,15 @@ struct Shared {
     /// (modelo|nome|destino, pasta do projeto): tentar de novo nao pergunta outra vez.
     last_project: Mutex<Option<(String, PathBuf)>>,
     last_converted: Mutex<Option<PathBuf>>,
+    /// Lotes de download esperando o atual terminar (colar links enquanto baixa entra na fila).
+    queue: Mutex<std::collections::VecDeque<Batch>>,
+    /// O trabalho em andamento e de download (e nao de conversao): so ele aceita fila.
+    downloading: AtomicBool,
+    /// Item baixando agora e o sinal para parar so ele.
+    item_cancel: Mutex<Option<(u32, Arc<AtomicBool>)>>,
+    /// Itens na fila que o usuario tirou antes de comecar.
+    skip: Mutex<std::collections::HashSet<u32>>,
+    history: Mutex<Option<Vec<history::Entry>>>,
     gpu: Mutex<Option<Option<String>>>,
     dialog_open: AtomicBool,
     panel_shown_at: Mutex<Option<Instant>>,
@@ -374,6 +432,27 @@ struct JobItem {
     /// So para links baixados pelo yt-dlp.
     #[serde(default)]
     quality: String,
+    /// Titulo e capa da previa, para o historico.
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    thumb: String,
+    /// Trecho em segundos (inicio e fim); sem os dois, o video inteiro.
+    #[serde(default)]
+    start: Option<f64>,
+    #[serde(default)]
+    end: Option<f64>,
+    /// Baixar a legenda junto.
+    #[serde(default)]
+    subs: bool,
+}
+
+/// Um "Baixar" do painel: os links, a pasta base e o que fazer depois.
+struct Batch {
+    items: Vec<JobItem>,
+    base: PathBuf,
+    open_at_end: bool,
+    convert_to: String,
 }
 
 #[derive(Deserialize)]
@@ -394,7 +473,7 @@ struct StartRequest {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StartAnswer {
-    status: &'static str, // needs_confirm | created | started
+    status: &'static str, // needs_confirm | created | started | queued
     root: String,
     base: String,
 }
@@ -408,12 +487,13 @@ enum JobEvent {
     Ok { id: u32, downloaded: usize, skipped: usize, converted: usize, convert_error: Option<String> },
     Fail { id: u32, message: String },
     Cancelled { id: u32 },
-    Done { failed: usize, ok: usize, cancelled: bool, base: String },
+    Done { failed: usize, ok: usize, cancelled: bool, base: String, more: bool },
 }
 
 #[tauri::command]
 fn start_job(app: AppHandle, state: State<Shared>, request: StartRequest) -> Result<StartAnswer, String> {
-    if state.cancel.lock().unwrap().is_some() {
+    // Uma conversao em andamento ocupa o app; um download em andamento so recebe o novo lote na fila.
+    if state.cancel.lock().unwrap().is_some() && !state.downloading.load(Ordering::SeqCst) {
         return Err("err.busy".into());
     }
     if request.download_only {
@@ -480,13 +560,8 @@ fn start_job(app: AppHandle, state: State<Shared>, request: StartRequest) -> Res
         return Ok(StartAnswer { status: "created", root: plan.root, base: answer_base });
     }
 
-    let cancel = Arc::new(AtomicBool::new(false));
-    *state.cancel.lock().unwrap() = Some(cancel.clone());
-    let open_at_end = config.open_at_end;
-    let worker_app = app.clone();
-    let convert_to = request.convert_to;
-    std::thread::spawn(move || run_job(worker_app, request.items, created, cancel, open_at_end, convert_to));
-    Ok(StartAnswer { status: "started", root: plan.root, base: answer_base })
+    let status = launch(&app, Batch { items: request.items, base: created, open_at_end: config.open_at_end, convert_to: request.convert_to });
+    Ok(StartAnswer { status, root: plan.root, base: answer_base })
 }
 
 /// Modo "so baixar": nenhuma pasta e criada e os modelos nem sao consultados para a estrutura.
@@ -516,8 +591,6 @@ fn start_download_only(app: AppHandle, state: State<Shared>, request: StartReque
     }
     // Modelos com erro nao impedem baixar: nesse caso vale abrir a pasta ao terminar.
     let open_at_end = models::load_config(&config_path(&app)).map(|c| c.open_at_end).unwrap_or(true);
-    let cancel = Arc::new(AtomicBool::new(false));
-    *state.cancel.lock().unwrap() = Some(cancel.clone());
     // Cada link pode ir para uma subpasta direta da pasta escolhida; nada e criado aqui.
     let mut items = Vec::with_capacity(request.items.len());
     for item in request.items {
@@ -531,11 +604,8 @@ fn start_download_only(app: AppHandle, state: State<Shared>, request: StartReque
         };
         items.push(JobItem { folder, ..item });
     }
-    let base = dest.clone();
-    let convert_to = request.convert_to;
-    let worker_app = app.clone();
-    std::thread::spawn(move || run_job(worker_app, items, base, cancel, open_at_end, convert_to));
-    Ok(StartAnswer { status: "started", root: String::new(), base: dest.display().to_string() })
+    let status = launch(&app, Batch { items, base: dest.clone(), open_at_end, convert_to: request.convert_to });
+    Ok(StartAnswer { status, root: String::new(), base: dest.display().to_string() })
 }
 
 /// GPU detectada uma vez por sessao (o teste leva alguns segundos).
@@ -597,7 +667,8 @@ fn download_for_editing(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(url, &mut hasher);
     let temp = target.join(format!(".frey-4k-{:016x}", std::hash::Hasher::finish(&hasher)));
-    youtube::download(url, &temp, "edit4k", youtube_login(app).as_ref(), cancel, on_progress)?;
+    let logins = logins_for(app, url);
+    youtube::download_with(url, &temp, "edit4k", &youtube::Extra::default(), &logins, &mut |login| remember_login(app, url, login), cancel, on_progress)?;
 
     let mut sources: Vec<PathBuf> = std::fs::read_dir(&temp)?.filter_map(Result::ok).map(|e| e.path()).filter(|p| convert::is_media(p)).collect();
     sources.sort();
@@ -638,18 +709,110 @@ fn download_for_editing(
     Ok(outcome)
 }
 
-fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<AtomicBool>, open_at_end: bool, convert_to: String) {
+/// Comeca o lote agora, ou poe na fila se um download ja esta rodando. Devolve "started" ou "queued".
+fn launch(app: &AppHandle, batch: Batch) -> &'static str {
+    let state = app.state::<Shared>();
+    let mut running = state.cancel.lock().unwrap();
+    if running.is_some() {
+        state.queue.lock().unwrap().push_back(batch);
+        return "queued";
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    *running = Some(cancel.clone());
+    state.downloading.store(true, Ordering::SeqCst);
+    let worker_app = app.clone();
+    std::thread::spawn(move || run_queue(worker_app, batch, cancel));
+    "started"
+}
+
+/// Baixa o lote e depois os que entraram na fila. Cancelar tudo cancela tambem os da fila.
+fn run_queue(app: AppHandle, first: Batch, cancel: Arc<AtomicBool>) {
+    let state = app.state::<Shared>();
+    let mut batch = first;
+    loop {
+        run_job(&app, &batch, &cancel);
+        let next = {
+            // Trava a mesma ordem que launch(): quem chega agora ou entra na fila ou acha o trabalho livre.
+            let mut running = state.cancel.lock().unwrap();
+            let next = if cancel.load(Ordering::Relaxed) { None } else { state.queue.lock().unwrap().pop_front() };
+            if next.is_none() {
+                let left: Vec<Batch> = state.queue.lock().unwrap().drain(..).collect();
+                for item in left.iter().flat_map(|b| b.items.iter()) {
+                    let _ = app.emit("job", JobEvent::Cancelled { id: item.id });
+                }
+                *running = None;
+                state.downloading.store(false, Ordering::SeqCst);
+                state.skip.lock().unwrap().clear();
+            }
+            next
+        };
+        match next {
+            Some(b) => batch = b,
+            None => break,
+        }
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some("Frey Project"));
+    }
+}
+
+fn history_path(app: &AppHandle) -> PathBuf {
+    config_dir(app).unwrap_or_default().join("baixados.json")
+}
+
+fn with_history<T>(app: &AppHandle, change: impl FnOnce(&mut Vec<history::Entry>) -> T) -> T {
+    let state = app.state::<Shared>();
+    let mut guard = state.history.lock().unwrap();
+    let list = guard.get_or_insert_with(|| history::load(&history_path(app)));
+    let result = change(list);
+    history::save(&history_path(app), list);
+    result
+}
+
+fn record(app: &AppHandle, item: &JobItem, folder: &Path, files: &[PathBuf], state: &str, message: String) {
+    let bytes = files.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum();
+    let entry = history::Entry {
+        id: format!("{}-{}", history::now(), item.id),
+        url: item.url.clone(),
+        kind: item.kind.clone(),
+        // Modo rapido comeca antes da previa: sem titulo, vale o nome do arquivo baixado.
+        title: if !item.title.is_empty() {
+            item.title.clone()
+        } else {
+            files.first().filter(|f| f.is_file()).and_then(|f| f.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| item.url.clone())
+        },
+        thumb: item.thumb.clone(),
+        folder: folder.display().to_string(),
+        files: files.iter().map(|f| f.display().to_string()).collect(),
+        state: state.into(),
+        message,
+        quality: item.quality.clone(),
+        bytes,
+        when: history::now(),
+    };
+    with_history(app, |list| history::add(list, entry.clone()));
+    let _ = app.emit("history", entry);
+}
+
+fn run_job(app: &AppHandle, batch: &Batch, cancel: &Arc<AtomicBool>) {
+    let state = app.state::<Shared>();
     let client = drive::Client::new();
-    let login = youtube_login(&app);
     let (mut ok, mut failed) = (0, 0);
-    let total = items.len();
-    for (position, item) in items.iter().enumerate() {
-        if cancel.load(Ordering::Relaxed) {
+    let total = batch.items.len();
+    let ui_lang = language(app);
+    for (position, item) in batch.items.iter().enumerate() {
+        let target = if item.folder.is_empty() { batch.base.clone() } else { batch.base.join(models::rel_path(&item.folder)) };
+        if cancel.load(Ordering::Relaxed) || state.skip.lock().unwrap().remove(&item.id) {
             let _ = app.emit("job", JobEvent::Cancelled { id: item.id });
+            if !cancel.load(Ordering::Relaxed) {
+                record(app, item, &target, &[], "cancelled", String::new());
+            }
             continue;
         }
+        // Parar este link nao para os outros: cada um tem o proprio sinal, e cancelar tudo marca os dois.
+        let item_cancel = Arc::new(AtomicBool::new(false));
+        *state.item_cancel.lock().unwrap() = Some((item.id, item_cancel.clone()));
         let _ = app.emit("job", JobEvent::Start { id: item.id });
-        let target = if item.folder.is_empty() { base.clone() } else { base.join(models::rel_path(&item.folder)) };
         let link = drive::Link { url: item.url.clone(), kind: if item.kind == "folder" { "folder" } else { "file" } };
         let mut last_emit = Instant::now();
         let mut on_progress = |progress: drive::Progress| {
@@ -667,49 +830,462 @@ fn run_job(app: AppHandle, items: Vec<JobItem>, base: PathBuf, cancel: Arc<Atomi
             }
         };
         let mut edit_error = None;
-        let result = if youtube::handles(&item.kind) && item.quality == "edit4k" {
-            download_for_editing(&app, item.id, &item.url, &target, &cancel, &mut on_progress, &mut edit_error)
-        } else if youtube::handles(&item.kind) {
-            youtube::download(&item.url, &target, &item.quality, login.as_ref(), &cancel, &mut on_progress)
-        } else {
-            client.download_link(&link, &target, &cancel, &mut on_progress)
+        let extra = youtube::Extra { subs: item.subs.then(|| subtitle_langs(&ui_lang)) };
+        let section = match (item.start, item.end) {
+            (Some(start), Some(end)) if end > start => Some((start, end)),
+            _ => None,
         };
+        let result = if youtube::handles(&item.kind) && section.is_some() {
+            download_section(app, item, &target, section.unwrap_or_default(), &extra, &item_cancel, &mut on_progress)
+        } else if youtube::handles(&item.kind) && item.quality == "edit4k" && extra == youtube::Extra::default() {
+            download_for_editing(app, item.id, &item.url, &target, &item_cancel, &mut on_progress, &mut edit_error)
+        } else if youtube::handles(&item.kind) {
+            let logins = logins_for(app, &item.url);
+            let quality = if item.quality == "edit4k" { "best" } else { item.quality.as_str() };
+            youtube::download_with(&item.url, &target, quality, &extra, &logins, &mut |login| remember_login(app, &item.url, login), &item_cancel, &mut on_progress)
+        } else {
+            client.download_link(&link, &target, &item_cancel, &mut on_progress)
+        };
+        *state.item_cancel.lock().unwrap() = None;
         match result {
             Ok(outcome) => {
                 ok += 1;
+                // "4K para edicao" com trecho ou legenda baixou no melhor ate 4K: a conversao entrega H.264.
+                let special = section.is_some() || extra != youtube::Extra::default();
+                let convert_to = if item.quality == "edit4k" && special { "mp4".to_string() } else { batch.convert_to.clone() };
                 let (converted, convert_error) = if convert_to.is_empty() {
                     (0, None)
                 } else {
-                    convert_downloaded(&app, item.id, &outcome.files, &convert_to, &cancel)
+                    convert_downloaded(app, item.id, &outcome.files, &convert_to, &item_cancel)
                 };
                 let convert_error = edit_error.or(convert_error);
+                let mut files = outcome.files.clone();
+                if files.is_empty() {
+                    files.push(target.clone());
+                }
+                let state_name = if convert_error.is_some() { "warning" } else { "done" };
+                record(app, item, &target, &files, state_name, convert_error.clone().unwrap_or_default());
                 let _ = app.emit("job", JobEvent::Ok { id: item.id, downloaded: outcome.downloaded, skipped: outcome.skipped, converted, convert_error });
             }
             Err(drive::Error::Cancelled) => {
+                record(app, item, &target, &[], "cancelled", String::new());
                 let _ = app.emit("job", JobEvent::Cancelled { id: item.id });
             }
             Err(drive::Error::Message(message)) => {
                 failed += 1;
+                record(app, item, &target, &[], "fail", message.clone());
                 let _ = app.emit("job", JobEvent::Fail { id: item.id, message });
             }
         }
     }
 
     let cancelled = cancel.load(Ordering::Relaxed);
-    *app.state::<Shared>().cancel.lock().unwrap() = None;
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_tooltip(Some("Frey Project"));
+    let more = !cancelled && !state.queue.lock().unwrap().is_empty();
+    let _ = app.emit("job", JobEvent::Done { failed, ok, cancelled, base: batch.base.display().to_string(), more });
+    if !cancelled && failed == 0 && batch.open_at_end {
+        open_folder(&batch.base);
     }
-    let _ = app.emit("job", JobEvent::Done { failed, ok, cancelled, base: base.display().to_string() });
-    if !cancelled && failed == 0 && open_at_end {
-        open_folder(&base);
-    }
-    if !cancelled && !panel(&app).is_visible().unwrap_or(false) {
-        let lang = language(&app);
+    if !cancelled && !more && !panel(app).is_visible().unwrap_or(false) {
         let key = if failed == 0 { "notifyDownloaded" } else { "notifyDownloadFailed" };
-        let body = i18n::native(&lang, key).replace("{0}", &ok.to_string()).replace("{1}", &failed.to_string());
+        let body = i18n::native(&ui_lang, key).replace("{0}", &ok.to_string()).replace("{1}", &failed.to_string());
         let _ = app.notification().builder().title("Frey Project").body(body).show();
     }
+}
+
+/// Nome do trecho: "Titulo (2.50-6.55).mp4". O video inteiro, ou outro trecho, nao e confundido com este.
+fn section_name(file: &Path, start: f64, end: f64) -> String {
+    let stem = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let label = format!("{}-{}", youtube::clock(start), youtube::clock(end)).replace(':', ".");
+    match file.extension() {
+        Some(ext) => format!("{stem} ({label}).{}", ext.to_string_lossy()),
+        None => format!("{stem} ({label})"),
+    }
+}
+
+/// So um trecho: baixa o video numa pasta temporaria ao lado do destino e corta no PC, sem recodificar.
+/// O --download-sections do yt-dlp fica parado lendo o video direto do YouTube, por isso nao e usado.
+/// A pasta temporaria tem nome fixo por link e trecho: cancelar e tentar de novo continua de onde parou.
+fn download_section(
+    app: &AppHandle,
+    item: &JobItem,
+    target: &Path,
+    (start, end): (f64, f64),
+    extra: &youtube::Extra,
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(drive::Progress),
+) -> Result<drive::Outcome, drive::Error> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&(&item.url, &item.quality, start.to_bits(), end.to_bits()), &mut hasher);
+    let temp = target.join(format!(".frey-trecho-{:016x}", std::hash::Hasher::finish(&hasher)));
+    let logins = logins_for(app, &item.url);
+    let quality = if item.quality == "edit4k" { "best" } else { item.quality.as_str() };
+    youtube::download_with(&item.url, &temp, quality, extra, &logins, &mut |login| remember_login(app, &item.url, login), cancel, on_progress)?;
+
+    let mut outcome = drive::Outcome { downloaded: 0, skipped: 0, files: Vec::new() };
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(&temp)?.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.is_file()).collect();
+    sources.sort();
+    for source in sources {
+        let name = source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if convert::is_media(&source) {
+            let dst = target.join(section_name(&source, start, end));
+            if dst.exists() {
+                outcome.skipped += 1;
+                continue;
+            }
+            match convert::cut(&source, &dst, start, end, cancel) {
+                Ok(()) => {
+                    outcome.downloaded += 1;
+                    outcome.files.push(dst);
+                }
+                Err(convert::Error::Cancelled) => return Err(drive::Error::Cancelled),
+                Err(convert::Error::Message(m)) => return Err(drive::Error::Message(i18n::code("err.cutFailed", &[&m]))),
+            }
+        } else if name.to_lowercase().ends_with(".srt") {
+            // A legenda vem inteira, com os tempos do video original.
+            let dst = target.join(&name);
+            if !dst.exists() {
+                let _ = std::fs::rename(&source, &dst);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&temp);
+    if outcome.downloaded + outcome.skipped == 0 {
+        return Err(drive::Error::Message("err.ytNoFile".into()));
+    }
+    Ok(outcome)
+}
+
+/// Legenda no idioma do painel e em ingles, as mais comuns de existir.
+fn subtitle_langs(lang: &str) -> String {
+    let code = match lang {
+        "zht" => "zh-Hant",
+        "zh" => "zh-Hans",
+        "" => "pt",
+        other => other,
+    };
+    if code == "en" { "en.*".into() } else { format!("{code}.*,en.*") }
+}
+
+// ---------------------------------------------------------------- previa dos links
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProbeAnswer {
+    meta: Option<youtube::Meta>,
+    /// Codigo de erro (err.*) quando a previa falhou.
+    error: Option<String>,
+    /// "youtube" ou "instagram" quando o site aceita o login opcional.
+    site: Option<&'static str>,
+    /// Onde a conta foi achada: "firefox", "brave"... ou "frey".
+    login_via: Option<String>,
+    risk_accepted: bool,
+    /// Navegadores instalados que o Frey olhou.
+    browsers: Vec<&'static str>,
+}
+
+#[tauri::command(async)]
+fn probe_link(app: AppHandle, url: String) -> ProbeAnswer {
+    let logins = logins_for(&app, &url);
+    let risk_accepted = app.state::<Shared>().settings.lock().unwrap().youtube_risco_aceito;
+    let site = youtube::site(&url);
+    let browsers = youtube::installed_browsers();
+    match youtube::probe(&url, &logins) {
+        Ok((meta, used)) => {
+            if let Some(login) = &used {
+                remember_login(&app, &url, login);
+            }
+            ProbeAnswer { meta: Some(meta), error: None, site, login_via: used.map(|l| login_label(&app, &l)), risk_accepted, browsers }
+        }
+        Err(drive::Error::Message(code)) => ProbeAnswer { meta: None, error: Some(code), site, login_via: None, risk_accepted, browsers },
+        Err(drive::Error::Cancelled) => ProbeAnswer { meta: None, error: None, site, login_via: None, risk_accepted, browsers },
+    }
+}
+
+// ---------------------------------------------------------------- aba Baixados
+
+#[tauri::command(async)]
+fn history_list(app: AppHandle) -> Vec<history::Entry> {
+    with_history(&app, |list| list.clone())
+}
+
+#[tauri::command(async)]
+fn history_remove(app: AppHandle, id: String) {
+    with_history(&app, |list| history::remove(list, &id));
+}
+
+#[tauri::command(async)]
+fn history_clear_done(app: AppHandle) -> Vec<history::Entry> {
+    with_history(&app, |list| {
+        history::clear_done(list);
+        list.clone()
+    })
+}
+
+/// Abre o arquivo no programa padrao do sistema.
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err("err.fileGone".into());
+    }
+    #[cfg(windows)]
+    let mut command = std::process::Command::new("explorer.exe");
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    command.arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Mostra o arquivo selecionado na pasta.
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return match path.parent().filter(|p| p.is_dir()) {
+            Some(parent) => {
+                open_folder(parent);
+                Ok(())
+            }
+            None => Err("err.fileGone".into()),
+        };
+    }
+    if path.is_dir() {
+        open_folder(&path);
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer.exe").raw_arg(format!("/select,\"{}\"", path.display())).spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg("-R").arg(&path).spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
+}
+
+// ---------------------------------------------------------------- capas dos cartoes
+
+/// Base64 sem dependencia extra: as capas chegam ao painel como data:, e a politica de conteudo
+/// continua sem liberar imagens de outros sites.
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// Tipo da imagem pelos primeiros bytes; outra coisa nao vira capa.
+fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("image/webp"),
+        [b'G', b'I', b'F', b'8', ..] => Some("image/gif"),
+        _ => None,
+    }
+}
+
+static THUMBS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+
+/// Capa de um video como data: (com cache na memoria). Vazio quando nao da para baixar.
+#[tauri::command(async)]
+fn thumb_data(url: String) -> String {
+    if !url.starts_with("https://") {
+        return String::new();
+    }
+    let cache = THUMBS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Some(found) = cache.lock().unwrap().get(&url) {
+        return found.clone();
+    }
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(15)))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36")
+        .build()
+        .into();
+    let bytes = agent
+        .get(&url)
+        .call()
+        .ok()
+        .and_then(|mut response| response.body_mut().with_config().limit(4 * 1024 * 1024).read_to_vec().ok())
+        .unwrap_or_default();
+    let data = match image_mime(&bytes) {
+        Some(mime) => format!("data:{mime};base64,{}", base64(&bytes)),
+        None => String::new(),
+    };
+    let mut cache = cache.lock().unwrap();
+    if cache.len() > 300 {
+        cache.clear();
+    }
+    cache.insert(url, data.clone());
+    data
+}
+
+#[cfg(test)]
+mod thumb_tests {
+    use super::*;
+
+    #[test]
+    fn base64_e_tipo_da_imagem() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(image_mime(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+        assert_eq!(image_mime(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("image/webp"));
+        assert_eq!(image_mime(b"<html>"), None, "pagina de erro nao vira capa");
+    }
+
+    #[test]
+    fn login_do_frey_reconhece_a_sessao_de_cada_site() {
+        let dir = std::env::temp_dir().join(format!("frey-login-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("login.txt");
+        std::fs::write(&path, "# Netscape HTTP Cookie File\n.instagram.com\tTRUE\t/\tTRUE\t0\tcsrftoken\tx\n").unwrap();
+        assert!(login_state_of(&path).is_empty(), "so o csrftoken nao e login");
+        std::fs::write(&path, ".instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc\n#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t0\tLOGIN_INFO\txyz\n").unwrap();
+        assert_eq!(login_state_of(&path), vec!["youtube", "instagram"]);
+        assert!(login_state_of(&dir.join("nao-existe.txt")).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trecho_entra_no_nome_do_arquivo() {
+        assert_eq!(section_name(Path::new("C:/x/Big Buck Bunny.mp4"), 170.0, 415.4), "Big Buck Bunny (2.50-6.55).mp4");
+        assert_eq!(section_name(Path::new("Reel [a].webm"), 5.0, 3725.0), "Reel [a] (0.05-1.02.05).webm");
+    }
+
+    #[test]
+    fn legenda_no_idioma_do_painel_e_em_ingles() {
+        assert_eq!(subtitle_langs("pt"), "pt.*,en.*");
+        assert_eq!(subtitle_langs("en"), "en.*");
+        assert_eq!(subtitle_langs("zht"), "zh-Hant.*,en.*");
+    }
+}
+
+// ---------------------------------------------------------------- "Entrar pelo Frey"
+
+/// Sites com sessao no arquivo de login do Frey, pelos cookies que so existem com a conta logada.
+fn login_state_of(path: &Path) -> Vec<&'static str> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let has = |domain: &str, names: &[&str]| {
+        text.lines().filter(|l| !l.starts_with('#') || l.starts_with("#HttpOnly_")).any(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            parts.len() >= 7 && parts[0].trim_start_matches("#HttpOnly_").ends_with(domain) && names.contains(&parts[5]) && !parts[6].is_empty()
+        })
+    };
+    let mut sites = Vec::new();
+    if has("youtube.com", &["SAPISID", "__Secure-3PSID", "LOGIN_INFO"]) {
+        sites.push("youtube");
+    }
+    if has("instagram.com", &["sessionid"]) {
+        sites.push("instagram");
+    }
+    sites
+}
+
+#[tauri::command]
+fn login_state(app: AppHandle) -> Vec<&'static str> {
+    login_state_of(&frey_login_path(&app))
+}
+
+#[tauri::command(async)]
+fn forget_frey_login(app: AppHandle) -> Vec<&'static str> {
+    let _ = std::fs::remove_file(frey_login_path(&app));
+    if let Some(window) = app.get_webview_window("login") {
+        let _ = window.destroy();
+    }
+    // Apaga tambem a sessao guardada pelo WebView, para a proxima entrada comecar do zero.
+    if let Ok(cookies) = panel(&app).cookies() {
+        for cookie in cookies {
+            let domain = cookie.domain().unwrap_or("").to_string();
+            if ["instagram.com", "youtube.com", "google.com"].iter().any(|d| domain.ends_with(d)) {
+                let _ = panel(&app).delete_cookie(cookie);
+            }
+        }
+    }
+    login_state_of(&frey_login_path(&app))
+}
+
+const LOGIN_PAGES: [&str; 4] = ["https://www.instagram.com/", "https://www.youtube.com/", "https://accounts.google.com/", "https://www.google.com/"];
+
+/// Escreve os cookies da janela de login no formato que o yt-dlp le (Netscape).
+fn save_frey_login(app: &AppHandle, window: &WebviewWindow) -> Vec<&'static str> {
+    let mut lines = vec!["# Netscape HTTP Cookie File".to_string(), "# Login feito pela janela do Frey Project. Nao compartilhe este arquivo.".to_string()];
+    let mut seen = std::collections::HashSet::new();
+    for page in LOGIN_PAGES {
+        let Ok(url) = page.parse() else { continue };
+        let Ok(cookies) = window.cookies_for_url(url) else { continue };
+        for cookie in cookies {
+            let host = page.trim_start_matches("https://").trim_end_matches('/');
+            let domain = cookie.domain().map(|d| if d.starts_with('.') { d.to_string() } else { format!(".{d}") }).unwrap_or_else(|| host.to_string());
+            let path = cookie.path().unwrap_or("/").to_string();
+            if !seen.insert((domain.clone(), path.clone(), cookie.name().to_string())) {
+                continue;
+            }
+            let expires = cookie.expires_datetime().map(|d| d.unix_timestamp().max(0)).unwrap_or(0);
+            let secure = if cookie.secure().unwrap_or(false) { "TRUE" } else { "FALSE" };
+            let sub = if domain.starts_with('.') { "TRUE" } else { "FALSE" };
+            lines.push(format!("{domain}\t{sub}\t{path}\t{secure}\t{expires}\t{}\t{}", cookie.name(), cookie.value()));
+        }
+    }
+    let path = frey_login_path(app);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, lines.join("\n") + "\n");
+    login_state_of(&path)
+}
+
+/// Abre a pagina de login do site numa janela do proprio Frey. Ao fechar, guarda o login para o yt-dlp.
+/// Assincrono: criar janela num comando sincrono trava a thread principal no Windows.
+#[tauri::command(async)]
+fn open_login(app: AppHandle, site: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("login") {
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    let (url, title) = match site.as_str() {
+        "instagram" => ("https://www.instagram.com/accounts/login/", "Instagram"),
+        _ => ("https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F", "YouTube"),
+    };
+    let lang = language(&app);
+    let window = WebviewWindowBuilder::new(&app, "login", tauri::WebviewUrl::External(url.parse().map_err(|_| "url")?))
+        .title(format!("{} · {title}", i18n::native(&lang, "loginWindow")))
+        .inner_size(480.0, 760.0)
+        .center()
+        .always_on_top(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let handle = app.clone();
+    let closing = window.clone();
+    let busy = Arc::new(AtomicBool::new(false));
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if busy.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            // Ler os cookies na thread da janela trava o WebView2: fica numa thread propria.
+            let (app, window) = (handle.clone(), closing.clone());
+            std::thread::spawn(move || {
+                let sites = save_frey_login(&app, &window);
+                let _ = window.destroy();
+                let _ = app.emit("login-saved", sites);
+            });
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -717,6 +1293,21 @@ fn cancel_job(state: State<Shared>) {
     if let Some(cancel) = state.cancel.lock().unwrap().as_ref() {
         cancel.store(true, Ordering::Relaxed);
     }
+    if let Some((_, item)) = state.item_cancel.lock().unwrap().as_ref() {
+        item.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Para so um link: o que esta baixando agora, ou um que ainda esta na fila.
+#[tauri::command]
+fn cancel_item(state: State<Shared>, id: u32) {
+    if let Some((current, item)) = state.item_cancel.lock().unwrap().as_ref() {
+        if *current == id {
+            item.store(true, Ordering::Relaxed);
+            return;
+        }
+    }
+    state.skip.lock().unwrap().insert(id);
 }
 
 #[tauri::command]
@@ -1164,7 +1755,8 @@ fn main() {
             boot, preview, parse_links, pick_folder, start_job, cancel_job, open_project, hide_panel, resize_panel,
             convert_tools, only_files, is_folder, pick_files, pick_out_dir, start_convert, open_converted,
             get_models, save_models, restore_default_model, set_language, set_download_only, take_copied_links, set_detect_link, set_youtube_login, pick_cookies_file,
-            recent_paths, forget_path, list_subfolders
+            recent_paths, forget_path, list_subfolders, cancel_item, probe_link, history_list, history_remove, history_clear_done,
+            open_path, reveal_path, open_login, login_state, forget_frey_login, thumb_data
         ])
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {

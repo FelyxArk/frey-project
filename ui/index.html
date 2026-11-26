@@ -11,6 +11,7 @@
     <header class="titlebar" data-tauri-drag-region>
       <span class="tabs" role="tablist">
         <button id="tabProject" type="button" role="tab" aria-selected="true" data-i18n="tabProject"></button>
+        <button id="tabDownloads" type="button" role="tab" aria-selected="false"><span data-i18n="tabDownloads"></span><span class="tab-badge" id="dlBadge" hidden></span></button>
         <button id="tabConvert" type="button" role="tab" aria-selected="false" data-i18n="tabConvert"></button>
         <button id="tabSettings" type="button" role="tab" aria-selected="false" data-i18n="tabSettings"></button>
       </span>
@@ -23,10 +24,10 @@
     </header>
 
     <div id="viewProject" class="no-subfolders" role="tabpanel" aria-labelledby="tabProject">
-      <div class="mode" role="radiogroup">
-        <button id="modeCreate" type="button" role="radio" aria-checked="true" data-i18n="modeCreateFolders"></button>
-        <button id="modeDownload" type="button" role="radio" aria-checked="false" data-i18n="modeDownloadOnly"></button>
-      </div>
+      <label class="toggle-row">
+        <input id="createFolders" class="switch" type="checkbox" role="switch">
+        <span class="toggle-row__text"><b data-i18n="createFoldersToggle"></b><small id="createFoldersHint"></small></span>
+      </label>
       <div class="query" id="queryRow">
         <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M2 5.5h5l1.5 2H16v7.5H2z"/></svg>
         <input id="name" type="text" maxlength="120" spellcheck="false" autocomplete="off" data-i18n-placeholder="namePlaceholder" data-i18n-aria="namePlaceholder">
@@ -71,9 +72,26 @@
 
       <div class="paste">
         <input id="links" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder="pastePlaceholder" data-i18n-aria="pastePlaceholder">
+        <label class="quick" data-i18n-title="quickModeHint">
+          <input id="quick" class="switch switch--small" type="checkbox" role="switch">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2.5 7H6l-1 4 4.5-6H6z"/></svg>
+          <span data-i18n="quickMode"></span>
+        </label>
       </div>
 
-      <ul class="rows" id="rows"></ul>
+      <ul class="cards" id="rows"></ul>
+    </div>
+
+    <div id="viewDownloads" role="tabpanel" aria-labelledby="tabDownloads" hidden>
+      <div class="fields fields--first">
+        <label class="search">
+          <svg viewBox="0 0 14 14" aria-hidden="true"><circle cx="6" cy="6" r="4.2"/><path d="m9.2 9.2 3.3 3.3"/></svg>
+          <input id="dlSearch" type="search" spellcheck="false" autocomplete="off" data-i18n-placeholder="dlSearch" data-i18n-aria="dlSearch">
+        </label>
+      </div>
+      <div class="filters" id="dlFilters" role="tablist"></div>
+      <ul class="dl-list" id="dlList"></ul>
+      <p class="dl-empty" id="dlEmpty" data-i18n="dlEmpty"></p>
     </div>
 
     <div id="viewConvert" role="tabpanel" aria-labelledby="tabConvert" hidden>
@@ -129,8 +147,16 @@
         </label>
       </div>
       <section class="risk" aria-labelledby="ytLoginTitle">
-        <h2 class="risk__title" id="ytLoginTitle" data-i18n="ytLoginTitle"></h2>
-        <p class="risk__text" data-i18n="ytLoginWarning"></p>
+        <div class="risk__head">
+          <h2 class="risk__title" id="ytLoginTitle" data-i18n="ytLoginTitle"></h2>
+          <button id="riskInfo" class="risk__icon" type="button" aria-expanded="false" aria-controls="riskText" data-i18n-title="riskInfo" data-i18n-aria="riskInfo">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 15 14H1z"/><path d="M8 6.2v3.6M8 11.6v.4"/></svg>
+          </button>
+        </div>
+        <div class="risk__text" id="riskText" hidden>
+          <p data-i18n="ytLoginWarning"></p>
+          <p data-i18n="ytLoginHint"></p>
+        </div>
         <label class="check check--risk">
           <input id="sYtRisk" type="checkbox">
           <span data-i18n="ytLoginAccept"></span>
@@ -143,7 +169,15 @@
           <button id="sYtCookies" class="btn btn--small" type="button" data-i18n="ytLoginPickFile" hidden></button>
         </div>
         <p class="hint" id="sYtCookiesPath" hidden></p>
-        <p class="hint" data-i18n="ytLoginHint"></p>
+        <div class="frey-login" id="sFreyLogin">
+          <span class="frey-login__title" data-i18n="freyLoginTitle"></span>
+          <span class="frey-login__state" id="sFreyState"></span>
+          <span class="frey-login__buttons">
+            <button id="sFreyYoutube" class="btn btn--small" type="button" data-i18n="freyLoginYoutube"></button>
+            <button id="sFreyInstagram" class="btn btn--small" type="button" data-i18n="freyLoginInstagram"></button>
+            <button id="sFreyForget" class="btn btn--small btn--danger" type="button" data-i18n="freyForget"></button>
+          </span>
+        </div>
       </section>
       <div class="fields fields--end">
         <label class="field field--grow">
@@ -183,6 +217,7 @@
     <footer class="actions" id="actions">
       <button id="open" type="button" class="btn" disabled data-i18n="openFolder"></button>
       <button id="cancel" type="button" class="btn" hidden data-i18n="cancel"></button>
+      <button id="clearDone" type="button" class="btn" hidden data-i18n="clearDone"></button>
       <button id="go" type="button" class="btn btn--primary"></button>
     </footer>
   </div>
